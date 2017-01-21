@@ -8,7 +8,7 @@ var eventEmitter = new events.EventEmitter();
 var startHandler = function StartRun() {
     console.log('Started Model!');
     request.post('http://localhost:8080',
-        {json:{'work':'sp','zone':1,'mode':'sov'}},
+        {json:{'work':'sp','zone':1,'mode':'sov','zonenum':2}},
         function(error,response,body){
             console.log(response.statusCode);
             }); 
