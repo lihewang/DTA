@@ -1,5 +1,6 @@
 //Starting node
 var events = require('events');
+var http = require('http');
 var hashtable = require('hashtable');
 var fs = require('fs');
 var csv = require('fast-csv');
@@ -7,14 +8,15 @@ var redis = require('redis');
 var pq = require('priorityqueuejs');
 
 var timeHash = new hashtable();
-var nodeHash = new hashtable();
+var nodeHash = new hashtable(); //network topology
 
 var redisClient = redis.createClient({url:"http://127.0.0.1:6379"});
 
 var eventEmitter = new events.EventEmitter();
+var httpListen = true;
 
 //csv reader
-var csvHandler = function Readcsv() {
+var csvHandler = function Readcsv(body) {
   var stream = fs.createReadStream("./Data/links.csv")
   var csvStream = csv({headers : true})
       .on("data", function(data){
@@ -32,112 +34,123 @@ var csvHandler = function Readcsv() {
          }           
       })
       .on("end", function(){
-         console.log("read links done"); 
-         //Start listening to http
-        eventEmitter.on('http', httpHandler);
-        eventEmitter.emit('http');       
+        console.log("read links done");   
+        eventEmitter.on('sp', spHandler);
+        eventEmitter.emit('sp',body);    
       });     
   stream.pipe(csvStream);
-};
+}
 
 //Write shortest path to redis
 var spHandler = function ShortestPath(body) {
-      console.log("SP for zone " + body.zone);
+      console.log("*** Find path for zone " + body.zone);
+      //prepare network - remove links going out of other zones
+      for (var i = 1; i <= body.zonenum; i++) {
+        if(i != body.zone){
+          nodeHash.remove(i);
+        }
+      }
+      //apply turn penalty
+
+
       //Priority queue for frontier nodes
-      var pqNode = new pq(function(a, b) {
-          return a.t - b.t;
+      var pqNodes = new pq(function(a, b) {
+          return b.t - a.t;
       });
       var cnt = 1;    //count visited zones
       var visitedNodes = new hashtable();       //track visited nodes, {node,time}
-      var frontierNodes = new hashtable();      //track frontier nodes, {node, time}
+      var settledNodes = new hashtable();
       var parentNodes = new hashtable();        //track parent nodes, {node, parent node}      
       var currNode = body.zone;
       visitedNodes.put(body.zone,0);            //root node
+      pqNodes.enq({t:0,nd:currNode}); 
       do {
         //Explore frontier node
+        var tpNode = pqNodes.deq();
+        currNode = tpNode.nd;
+        settledNodes.put(currNode,1);
+        //console.log('settled node add ' + currNode);
         if (nodeHash.has(currNode)) {            //currNode has downsteam nodes
           var dnNodes = nodeHash.get(currNode);  //get new frontier nodes
           //Update time on new nodes
           dnNodes.forEach(function(dnNode) {
 
-              if (!visitedNodes.has(dnNode)) {
-                  var tempTime = visitedNodes.get(currNode) + timeHash.get(currNode + '-' + dnNode);
+              if (!settledNodes.has(dnNode)) {    //exclude settled nodes
+                  //get time of dnNode
+                  var tempTime = parseFloat(visitedNodes.get(currNode)) + parseFloat(timeHash.get(currNode + '-' + dnNode));
 
-                  if (frontierNodes.has(dnNode)){
-                      //update time
-                      if (tempTime < frontierNodes.get(dnNode)) {                       
-                          frontierNodes.put(dnNode, tempTime);
+                  if (visitedNodes.has(dnNode)){
+                      //dnNode has been checked before
+                      if (tempTime < visitedNodes.get(dnNode)) {    //update time when the path is shorter                   
+                          pqNodes.enq({t:tempTime,nd:dnNode});
                           parentNodes.put(dnNode,currNode);
+                          visitedNodes.put(dnNode,tempTime);
+                          //console.log('visit again ' + dnNode + ', ' + tempTime);
                       }                    
                   }else{
-                      //first visited node
-                      frontierNodes.put(dnNode, tempTime);
+                      //first time checked node
+                      pqNodes.enq({t:tempTime,nd:dnNode});
                       parentNodes.put(dnNode,currNode);
+                      visitedNodes.put(dnNode,tempTime);
+                      //console.log('visit first time ' + dnNode + ', ' + tempTime);
                   }
 
-                //put to priority queue
-                pqNode.enq({t:frontierNodes.get(dnNode),nd:dnNode}); 
               }  //end if
-
+             
           }); //end forEach
         }  //end if
-    
-        var tempNd = pqNode.deq();  //get next node
-        visitedNodes.put(tempNd.nd,tempNd.t);
-        currNode = tempNd.nd;
-        frontierNodes.remove(currNode);
-        if(currNode<=body.zonenum){
-          cnt++;
-        }
+        //console.log('pqNode size = ' + pqNodes.size());
       }
-      while (visitedNodes.size() < nodeHash.size());
+      while (pqNodes.size() > 0);
       
-      //Construct path
+      //Construct path string and write to redis db
+      redisClient.flushdb();
       for (var i = 1; i <= body.zonenum; i++) {
         var zonePair = body.zone + '-' + i;
-        var path = [i];
+        var path = i.toString();
         var pNode = i;
         if (parentNodes.has(pNode)) {
           do {        
            pNode = parentNodes.get(pNode);
-           path.unshift(pNode);      
+           path = pNode.toString() + ',' + path;      
           }
           while (pNode != body.zone);
         } 
-        console.log(zonePair + ', ' + path);     
+        console.log(zonePair + ', ' + path); 
+        redisClient.set(zonePair,path);       //write to redis db  
       }
-
-      redisClient.flushdb();
-      redisClient.set('1-2','1 2 3 4',function(err,reply) {
-          console.log(reply + ' sp set');
-      });
-      //call volHandler
-      eventEmitter.on('vol', volHandler);
-      eventEmitter.emit('vol');      
-};
+      httpListen = true;
+      //call idle Worker
+      //eventEmitter.on('idleWorker', iwHandler);
+      //eventEmitter.emit('idleWorker');      
+}
 
 //http listener
-var httpHandler = function StartListenhttp(){
-  var http = require('http');
+var httpHandler = function StartListenhttp(){   
+  console.log('http server start');
+  var responseBody = 'initialize';
   var handleRequest = function (req, res) {
     req.on('data',function(data){
-        var body = JSON.parse(data);
+      var body = JSON.parse(data);
+      if(httpListen){
+        httpListen = false;
+        responseBody = body.zone + ' finished';       
         if (body.work == 'sp'){
-          eventEmitter.on('sp', spHandler);
-          eventEmitter.emit('sp',body); 
-        }        
+          console.log('emit zone ' + body.zone);
+          eventEmitter.on('csv', csvHandler);
+          eventEmitter.emit('csv',body);          
+        }
+      }else{
+        responseBody = body.zone + ' not finished';
+      }        
     });
     res.writeHead(200);
-    res.end('Hello Kubernetes!');
+    res.end(responseBody);
   };
   var www = http.createServer(handleRequest);
   www.listen(8080);
-  //debug
-  eventEmitter.on('sp', spHandler);
-  eventEmitter.emit('sp',{'work':'sp','zone':1,'mode':'sov','zonenum':2}); 
-
   //process.exit(0); //End server 
-};
+}
 
 //Write vol to redis
 var volHandler = function vol() {
@@ -157,17 +170,22 @@ var volHandler = function vol() {
             redisClient.set(keyvalue,30);
           };
     });    
-};
+}
 
 //start point
 var startHandler = function StartRun() {
   //Read in links
   console.log('Started Worker!');
-  eventEmitter.on('csv', csvHandler);
-  eventEmitter.emit('csv');  
-};
+  //Start listening to http
+  eventEmitter.on('http', httpHandler);
+  eventEmitter.emit('http');  
+}
 
 eventEmitter.on('Start', startHandler);
 eventEmitter.emit('Start');
+
+var httpHandler = function StartListenhttp(){ 
+  //puy worker to idle
+}
 
 
