@@ -1,22 +1,22 @@
 //Starting node
 var events = require('events');
-var http = require('http');
 var hashtable = require('hashtable');
 var fs = require('fs');
 var csv = require('fast-csv');
 var redis = require('redis');
 var pq = require('priorityqueuejs');
+var express = require('express');
+var bodyParser = require('body-parser');
 
 var timeHash = new hashtable();
 var nodeHash = new hashtable(); //network topology
 
 var redisClient = redis.createClient({url:"http://127.0.0.1:6379"});
-
+var jsonParser = bodyParser.json();
 var eventEmitter = new events.EventEmitter();
-var httpListen = true;
 
 //csv reader
-var csvHandler = function Readcsv(body) {
+var csvReader = function Readcsv(req,res,next) {
   var stream = fs.createReadStream("./Data/links.csv")
   var csvStream = csv({headers : true})
       .on("data", function(data){
@@ -34,19 +34,19 @@ var csvHandler = function Readcsv(body) {
          }           
       })
       .on("end", function(){
-        console.log("read links done");   
-        eventEmitter.on('sp', spHandler);
-        eventEmitter.emit('sp',body);    
+        console.log("read links done"); 
+        next();  
       });     
-  stream.pipe(csvStream);
+  stream.pipe(csvStream);      
 }
 
 //Write shortest path to redis
-var spHandler = function ShortestPath(body) {
-      console.log("*** Find path for zone " + body.zone);
+var sp = function ShortestPath(req,res,next) {
+      var bdy = req.body;
+      console.log("*** Find path for zone " + bdy.zone);
       //prepare network - remove links going out of other zones
-      for (var i = 1; i <= body.zonenum; i++) {
-        if(i != body.zone){
+      for (var i = 1; i <= bdy.zonenum; i++) {
+        if(i != bdy.zone){
           nodeHash.remove(i);
         }
       }
@@ -61,8 +61,8 @@ var spHandler = function ShortestPath(body) {
       var visitedNodes = new hashtable();       //track visited nodes, {node,time}
       var settledNodes = new hashtable();
       var parentNodes = new hashtable();        //track parent nodes, {node, parent node}      
-      var currNode = body.zone;
-      visitedNodes.put(body.zone,0);            //root node
+      var currNode = bdy.zone;
+      visitedNodes.put(bdy.zone,0);            //root node
       pqNodes.enq({t:0,nd:currNode}); 
       do {
         //Explore frontier node
@@ -105,8 +105,8 @@ var spHandler = function ShortestPath(body) {
       
       //Construct path string and write to redis db
       redisClient.flushdb();
-      for (var i = 1; i <= body.zonenum; i++) {
-        var zonePair = body.zone + '-' + i;
+      for (var i = 1; i <= bdy.zonenum; i++) {
+        var zonePair = bdy.zone + '-' + i;
         var path = i.toString();
         var pNode = i;
         if (parentNodes.has(pNode)) {
@@ -114,43 +114,29 @@ var spHandler = function ShortestPath(body) {
            pNode = parentNodes.get(pNode);
            path = pNode.toString() + ',' + path;      
           }
-          while (pNode != body.zone);
+          while (pNode != bdy.zone);
         } 
         console.log(zonePair + ', ' + path); 
         redisClient.set(zonePair,path);       //write to redis db  
       }
-      httpListen = true;
-      //call idle Worker
-      //eventEmitter.on('idleWorker', iwHandler);
-      //eventEmitter.emit('idleWorker');      
+      next();      
 }
 
 //http listener
-var httpHandler = function StartListenhttp(){   
-  console.log('http server start');
-  var responseBody = 'initialize';
-  var handleRequest = function (req, res) {
-    req.on('data',function(data){
-      var body = JSON.parse(data);
-      if(httpListen){
-        httpListen = false;
-        responseBody = body.zone + ' finished';       
-        if (body.work == 'sp'){
-          console.log('emit zone ' + body.zone);
-          eventEmitter.on('csv', csvHandler);
-          eventEmitter.emit('csv',body);          
-        }
-      }else{
-        responseBody = body.zone + ' not finished';
-      }        
-    });
-    res.writeHead(200);
-    res.end(responseBody);
-  };
-  var www = http.createServer(handleRequest);
-  www.listen(8080);
-  //process.exit(0); //End server 
-}
+var app = express();
+var router = express.Router();
+router.use(bodyParser.json());
+router.use(csvReader);
+router.use(sp);
+router.all('/', function(req,res,next){
+  var bdy =req.body;
+  console.log('Start zone ' + bdy.zone);
+  res.send('csv read');
+})
+app.use('/', router);
+var server = app.listen(8080);
+
+//process.exit(0); //End server 
 
 //Write vol to redis
 var volHandler = function vol() {
@@ -172,20 +158,5 @@ var volHandler = function vol() {
     });    
 }
 
-//start point
-var startHandler = function StartRun() {
-  //Read in links
-  console.log('Started Worker!');
-  //Start listening to http
-  eventEmitter.on('http', httpHandler);
-  eventEmitter.emit('http');  
-}
-
-eventEmitter.on('Start', startHandler);
-eventEmitter.emit('Start');
-
-var httpHandler = function StartListenhttp(){ 
-  //puy worker to idle
-}
 
 
