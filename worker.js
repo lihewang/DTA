@@ -7,6 +7,7 @@ var redis = require('redis');
 var pq = require('priorityqueuejs');
 var express = require('express');
 var bodyParser = require('body-parser');
+var async = require('async');
 
 var timeHash = new hashtable();
 var nodeHash = new hashtable(); //network topology
@@ -126,10 +127,40 @@ var sp = function ShortestPath(req,res,next) {
 var app = express();
 var router = express.Router();
 router.use(bodyParser.json());
-router.use(csvReader);
-router.use(sp);
+//router.use(csvReader);
+//router.use(sp);
 router.all('/', function(req,res,next){
   var bdy =req.body;
+  //sp task
+  if (bdy.task == 'sp'){
+    redisClient.select(6);       //task db 
+    //get job  
+    var n = 0; 
+    async.whilst(
+      //loop until to-do list is nil
+      function(){
+        redisClient.multi()
+        .smove('to-do','doing',redisClient.spop('to-do'))
+        .exec(function(err,replies){
+          console.log("MULTI got " + replies.length + " replies");
+          replies.forEach(function (reply, index) {
+            console.log("Reply " + index + ": " + reply.toString());
+          });
+        });
+        return true;
+      },
+      function(callback){
+        async.series(
+          {one:function(){}},
+          {two:function(){}}
+        );        
+      },
+      function(err){
+
+      }
+    );
+
+  }
   console.log('Start zone ' + bdy.zone);
   res.send('csv read');
 })
