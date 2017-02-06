@@ -46,12 +46,11 @@ var rdcsv = function Readcsv(callback) {
 }
 
 //Write shortest path to redis
-var sp = function ShortestPath(req,res,next) {
-      var bdy = req.body;
-      console.log("*** Find path for zone " + bdy.zone);
+var sp = function ShortestPath(zone,zonenum,callback) {
+      console.log("*** Find path for zone " + zone);
       //prepare network - remove links going out of other zones
-      for (var i = 1; i <= bdy.zonenum; i++) {
-        if(i != bdy.zone){
+      for (var i = 1; i <= zonenum; i++) {
+        if(i != zone){
           nodeHash.remove(i);
         }
       }
@@ -66,8 +65,8 @@ var sp = function ShortestPath(req,res,next) {
       var visitedNodes = new hashtable();       //track visited nodes, {node,time}
       var settledNodes = new hashtable();
       var parentNodes = new hashtable();        //track parent nodes, {node, parent node}      
-      var currNode = bdy.zone;
-      visitedNodes.put(bdy.zone,0);            //root node
+      var currNode = zone;
+      visitedNodes.put(zone,0);            //root node
       pqNodes.enq({t:0,nd:currNode}); 
       do {
         //Explore frontier node
@@ -109,9 +108,9 @@ var sp = function ShortestPath(req,res,next) {
       while (pqNodes.size() > 0);
       
       //Construct path string and write to redis db
-      redisClient.flushdb();
-      for (var i = 1; i <= bdy.zonenum; i++) {
-        var zonePair = bdy.zone + '-' + i;
+      redisClient.select(1);  //path db
+      for (var i = 1; i <= zonenum; i++) {
+        var zonePair = zone + '-' + i;
         var path = i.toString();
         var pNode = i;
         if (parentNodes.has(pNode)) {
@@ -119,12 +118,12 @@ var sp = function ShortestPath(req,res,next) {
            pNode = parentNodes.get(pNode);
            path = pNode.toString() + ',' + path;      
           }
-          while (pNode != bdy.zone);
+          while (pNode != zone);
         } 
         console.log(zonePair + ', ' + path); 
         redisClient.set(zonePair,path);       //write to redis db  
-      }
-      next();      
+      }  
+    callback('done'); 
 }
 
 //http listener
@@ -134,8 +133,7 @@ router.use(bodyParser.json());
 router.all('/', function(req,res,next){
   var bdy =req.body;
   //sp task
-  if (bdy.task == 'sp'){
-    redisClient.select(6);       //task db 
+  if (bdy.task == 'sp'){ 
     //get job  
     var spZone = 0; 
     async.during(
@@ -143,10 +141,14 @@ router.all('/', function(req,res,next){
       //test function
       function(cb){ 
           console.log('begin loop');
+          redisClient.select(6);       //task db 
           async.series([
             function(callback){
               redisClient.rpoplpush('to-do','doing', function(err, result) {               
                 spZone = result; 
+                redisClient.lrange('to-do','0','3', function(err, result){
+                  console.log('to-do list ' + result);
+                });
                 callback(null,spZone);     
               });              
             }],
@@ -162,16 +164,20 @@ router.all('/', function(req,res,next){
           function(cb){
             //read network
             rdcsv(function(err,result){
-                console.log('continue');
                 cb(null,result);
             });          
-          }        
+          },
+          function(cb){
+            //create shortest path
+            sp(spZone,bdy.zonenum,function(err,result){
+                console.log('run sp ' + result);
+                cb(null,result);
+            });
+          }       
           ],function(err,results){
-              console.log('read csv ' + results);
+              console.log('read csv ' + results[1]);
               callback(); 
           }); 
-          //callback(); 
-          //setTimeout(callback, 1);  
       },
       //whilst callback
       function(err,results){
