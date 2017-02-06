@@ -8,16 +8,20 @@ var pq = require('priorityqueuejs');
 var express = require('express');
 var bodyParser = require('body-parser');
 var async = require('async');
-
+var Scripto = require('redis-scripto');
+    
 var timeHash = new hashtable();
-var nodeHash = new hashtable(); //network topology
+var nodeHash = new hashtable();     //network topology
 
-var redisClient = redis.createClient({url:"http://127.0.0.1:6379"});
+var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"});
+var scriptManager = new Scripto(redisClient);
+scriptManager.loadFromFile('task','./task.lua');
 var jsonParser = bodyParser.json();
 var eventEmitter = new events.EventEmitter();
 
 //csv reader
-var csvReader = function Readcsv(req,res,next) {
+var rdcsv = function Readcsv(callback) {
+  nodeHash.clear();
   var stream = fs.createReadStream("./Data/links.csv")
   var csvStream = csv({headers : true})
       .on("data", function(data){
@@ -36,7 +40,7 @@ var csvReader = function Readcsv(req,res,next) {
       })
       .on("end", function(){
         console.log("read links done"); 
-        next();  
+        callback('done');
       });     
   stream.pipe(csvStream);      
 }
@@ -127,41 +131,56 @@ var sp = function ShortestPath(req,res,next) {
 var app = express();
 var router = express.Router();
 router.use(bodyParser.json());
-//router.use(csvReader);
-//router.use(sp);
 router.all('/', function(req,res,next){
   var bdy =req.body;
   //sp task
   if (bdy.task == 'sp'){
     redisClient.select(6);       //task db 
     //get job  
-    var n = 0; 
-    async.whilst(
-      //loop until to-do list is nil
-      function(){
-        redisClient.multi()
-        .smove('to-do','doing',redisClient.spop('to-do'))
-        .exec(function(err,replies){
-          console.log("MULTI got " + replies.length + " replies");
-          replies.forEach(function (reply, index) {
-            console.log("Reply " + index + ": " + reply.toString());
-          });
-        });
-        return true;
+    var spZone = 0; 
+    async.during(
+      //loop until to-do list is null
+      //test function
+      function(cb){ 
+          console.log('begin loop');
+          async.series([
+            function(callback){
+              redisClient.rpoplpush('to-do','doing', function(err, result) {               
+                spZone = result; 
+                callback(null,spZone);     
+              });              
+            }],
+            function(err,results){
+              console.log('sp zone ' + spZone);
+              return cb(null,spZone>0);
+          });                           
       },
+      //repeating function
       function(callback){
-        async.series(
-          {one:function(){}},
-          {two:function(){}}
-        );        
+          console.log('repeating');
+          async.series([
+          function(cb){
+            //read network
+            rdcsv(function(err,result){
+                console.log('continue');
+                cb(null,result);
+            });          
+          }        
+          ],function(err,results){
+              console.log('read csv ' + results);
+              callback(); 
+          }); 
+          //callback(); 
+          //setTimeout(callback, 1);  
       },
-      function(err){
-
-      }
+      //whilst callback
+      function(err,results){
+          console.log('end loop ' + results);
+      }    
     );
 
   }
-  console.log('Start zone ' + bdy.zone);
+  console.log('total zone ' + bdy.zonenum);
   res.send('csv read');
 })
 app.use('/', router);
