@@ -2,12 +2,15 @@
 var events = require('events');
 var redis = require('redis');
 var request = require('request');
+var gapi = require('./google_api.js');
+//var async = require('async');
 
 var eventEmitter = new events.EventEmitter();
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"});
-redisClient.select(6);  //task db
+
 var startHandler = function StartRun() {
     console.log('Started Model!');
+    redisClient.select(6);  //task db
     redisClient.flushdb();
     for (var i = 1; i <= 3; i++) {
         redisClient.rpush('to-do',i);      
