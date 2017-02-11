@@ -18,11 +18,11 @@ var scriptManager = new Scripto(redisClient);
 scriptManager.loadFromFile('task','./task.lua');
 var jsonParser = bodyParser.json();
 var eventEmitter = new events.EventEmitter();
-
+var par = JSON.parse(fs.readFileSync("./Data/parameters.json"));
 //csv reader
 var rdcsv = function Readcsv(callback) {
   nodeHash.clear();
-  var stream = fs.createReadStream("./Data/links.csv")
+  var stream = fs.createReadStream("./Data/" + par.linkfilename)
   var csvStream = csv({headers : true})
       .on("data", function(data){
          timeHash.put(data['ID'],data['T']);
@@ -45,7 +45,7 @@ var rdcsv = function Readcsv(callback) {
   stream.pipe(csvStream);      
 }
 
-//Write shortest path to redis
+//find shortest path and write results to redis
 var sp = function ShortestPath(zone,zonenum,callback) {
       console.log("*** Find path for zone " + zone);
       //prepare network - remove links going out of other zones
