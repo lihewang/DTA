@@ -25,7 +25,9 @@ var rdcsv = function Readcsv(callback) {
   var stream = fs.createReadStream("./Data/" + par.linkfilename)
   var csvStream = csv({headers : true})
       .on("data", function(data){
-         timeHash.put(data['ID'],data['T']);
+        for (var i = 1; i <= par.timesteps; i++) {
+          timeHash.put(data['ID'] + ':' + i.toString,data['T' + i.toString]);
+        }
          //network topology
          var abnode = data['ID'].split('-');   
          if (nodeHash.has(abnode[0])){          
@@ -81,7 +83,7 @@ var sp = function ShortestPath(zone,zonenum,callback) {
 
               if (!settledNodes.has(dnNode)) {    //exclude settled nodes
                   //get time of dnNode
-                  var tempTime = parseFloat(visitedNodes.get(currNode)) + parseFloat(timeHash.get(currNode + '-' + dnNode));
+                  var tempTime = parseFloat(visitedNodes.get(currNode)) + parseFloat(timeHash.get(currNode + '-' + dnNode + ':1'));
 
                   if (visitedNodes.has(dnNode)){
                       //dnNode has been checked before
@@ -184,6 +186,10 @@ router.all('/', function(req,res,next){
           console.log('end loop ' + results);
       }    
     );
+
+  }
+  //move vehicles
+  if (bdy.task == 'mv'){ 
 
   }
   console.log('total zone ' + bdy.zonenum);

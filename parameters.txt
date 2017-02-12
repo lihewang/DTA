@@ -1,0 +1,3 @@
+set zones 10
+set ftype:exp 86
+set ftype:gp 90
