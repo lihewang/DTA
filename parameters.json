@@ -1,0 +1,6 @@
+{
+    "zonenum":3,
+    "timesteps":96,
+    "linkfilename":"links.csv",
+    "triptablefilename":"triptable.csv"
+}
