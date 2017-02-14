@@ -5,7 +5,7 @@ var request = require('request');
 var async = require('async');
 var fs = require('fs');
 
-var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"});
+var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
 
 var par = null;
 async.series([
@@ -19,25 +19,47 @@ async.series([
         console.log('start of sp');
         async.series([
             //put task to db
-            function(callback){
-                redisClient.select(6);  
-                redisClient.flushdb();
-                for (var i = 1; i <= par.zonenum; i++) {
-                    redisClient.rpush('to-do',i);      
-                }
-                callback();
+            function(callback){               
+                async.series([
+                    function(callback){
+                        multi = redisClient.multi();
+                        //clear shortest path db
+                        multi.select(1);  
+                        multi.flushdb();
+                        //clear task db
+                        multi.select(6);  
+                        multi.flushdb();                     
+                        multi.exec(function(){
+                            callback();
+                        });
+                    },
+                    function(callback){
+                        multi = redisClient.multi();
+                        for (var i = 1; i <= par.zonenum; i++) {                          
+                            multi.rpush('to-do',i);      
+                        }
+                        multi.exec(function(){
+                            callback();
+                        });                    
+                    }],
+                    function(err,results){
+                        callback(); 
+                    }
+                );                               
             },
             //make call
             function(callback){
                 request.post('http://localhost:8080',
-                {json:{'task':'sp','mode':'sov','zonenum':3}},
+                {json:{'task':'sp','mode':'TRK','tp':50,'zonenum':3}},
                 function(error,response,body){
                     console.log('end of sp ' + body);
                     callback();
                 });
-            }]
-        );
-        callback();
+            }],
+            function(err,results){
+                callback();
+            }
+        );      
     },
     //move vehicles
     function(callback){

@@ -8,9 +8,11 @@ var pq = require('priorityqueuejs');
 var express = require('express');
 var bodyParser = require('body-parser');
 var async = require('async');
+var math = require('mathjs');
 var Scripto = require('redis-scripto');
     
-var timeHash = new hashtable();
+var timeHash = new hashtable();     //link time
+var distHash = new hashtable();     //link distance
 var nodeHash = new hashtable();     //network topology
 
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"});
@@ -19,36 +21,47 @@ scriptManager.loadFromFile('task','./task.lua');
 var jsonParser = bodyParser.json();
 var eventEmitter = new events.EventEmitter();
 var par = JSON.parse(fs.readFileSync("./Data/parameters.json"));
-//csv reader
-var rdcsv = function Readcsv(callback) {
+
+//********csv reader********
+var rdcsv = function Readcsv(mode,callback) {
   nodeHash.clear();
+  //get banning facility type
+  if(mode=="HOV"){
+    var ftypeBan = par.pathban.HOV;
+  }else{
+    var ftypeBan = par.pathban.TRK;
+  }
+
   var stream = fs.createReadStream("./Data/" + par.linkfilename)
   var csvStream = csv({headers : true})
       .on("data", function(data){
+        //create time hash table
         for (var i = 1; i <= par.timesteps; i++) {
           timeHash.put(data['ID'] + ':' + i.toString,data['T' + i.toString]);
         }
+        distHash.put(data['ID'], data['Dist']);
          //network topology
-         var abnode = data['ID'].split('-');   
-         if (nodeHash.has(abnode[0])){          
-           var value = nodeHash.get(abnode[0]);
-           value.push(abnode[1]);
-           nodeHash.put(abnode[0],value);
-           console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
-         }else{
-           nodeHash.put(abnode[0],[abnode[1]]);
-           console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
+         if (ftypeBan.indexOf(parseInt(data['Ftype']))==-1){  //if a link is not banned
+            var abnode = data['ID'].split('-');   
+            if (nodeHash.has(abnode[0])){          
+               var value = nodeHash.get(abnode[0]);
+              value.push(abnode[1]);
+              nodeHash.put(abnode[0],value);
+              console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
+            }else{
+              nodeHash.put(abnode[0],[abnode[1]]);
+              console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
+            }
          }           
       })
       .on("end", function(){
-        console.log("read links done"); 
-        callback('done');
+        callback(null,'read links done');
       });     
   stream.pipe(csvStream);      
 }
 
-//find shortest path and write results to redis
-var sp = function ShortestPath(zone,zonenum,callback) {
+//********find time dependent shortest path and write results to redis********
+var sp = function ShortestPath(zone,zonenum,tp,mode,callback) {
       console.log("*** Find path for zone " + zone);
       //prepare network - remove links going out of other zones
       for (var i = 1; i <= zonenum; i++) {
@@ -83,7 +96,9 @@ var sp = function ShortestPath(zone,zonenum,callback) {
 
               if (!settledNodes.has(dnNode)) {    //exclude settled nodes
                   //get time of dnNode
-                  var tempTime = parseFloat(visitedNodes.get(currNode)) + parseFloat(timeHash.get(currNode + '-' + dnNode + ':1'));
+                  var timeCurrNode = parseFloat(visitedNodes.get(currNode));
+                  var timePeriod = math.min(par.timesteps,math.floor(timeCurrNode/15)+tp);
+                  var tempTime = timeCurrNode + parseFloat(timeHash.get(currNode + '-' + dnNode + ':' + timePeriod));
 
                   if (visitedNodes.has(dnNode)){
                       //dnNode has been checked before
@@ -123,18 +138,18 @@ var sp = function ShortestPath(zone,zonenum,callback) {
           while (pNode != zone);
         } 
         console.log(zonePair + ', ' + path); 
-        redisClient.set(zonePair,path);       //write to redis db  
+        redisClient.set(zonePair + ":path",path);       //write to redis db  
       }  
-    callback('done'); 
+    callback(null,zonePair + ',' + path); 
 }
 
-//http listener
+//********http listener********
 var app = express();
 var router = express.Router();
 router.use(bodyParser.json());
 router.all('/', function(req,res,next){
   var bdy =req.body;
-  //sp task
+  //create shortest path
   if (bdy.task == 'sp'){ 
     //get job  
     var spZone = 0; 
@@ -165,13 +180,14 @@ router.all('/', function(req,res,next){
           async.series([
           function(cb){
             //read network
-            rdcsv(function(err,result){
+            rdcsv(bdy.mode,function(err,result){
                 cb(null,result);
+                console.log('run rdcsv ' + result);
             });          
           },
           function(cb){
             //create shortest path
-            sp(spZone,bdy.zonenum,function(err,result){
+            sp(spZone,bdy.zonenum,bdy.tp,bdy.mode,function(err,result){
                 console.log('run sp ' + result);
                 cb(null,result);
             });
