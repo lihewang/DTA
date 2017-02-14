@@ -15,7 +15,7 @@ var timeHash = new hashtable();     //link time
 var distHash = new hashtable();     //link distance
 var nodeHash = new hashtable();     //network topology
 
-var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"});
+var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
 var scriptManager = new Scripto(redisClient);
 scriptManager.loadFromFile('task','./task.lua');
 var jsonParser = bodyParser.json();
@@ -126,6 +126,7 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,callback) {
       
       //Construct path string and write to redis db
       redisClient.select(1);  //path db
+      multi = redisClient.multi();
       for (var i = 1; i <= zonenum; i++) {
         var zonePair = zone + '-' + i;
         var path = i.toString();
@@ -138,9 +139,11 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,callback) {
           while (pNode != zone);
         } 
         console.log(zonePair + ', ' + path); 
-        redisClient.set(zonePair + ":path",path);       //write to redis db  
-      }  
-    callback(null,zonePair + ',' + path); 
+        multi.set(zonePair + ":path",path);       //write to redis db  
+      } 
+      multi.exec(function(){
+        callback(null,zonePair + ',' + path); 
+      });      
 }
 
 //********http listener********
