@@ -2,5 +2,9 @@
     "zonenum":3,
     "timesteps":96,
     "linkfilename":"links.csv",
-    "triptablefilename":"triptable.csv"
+    "triptablefilename":"triptable.csv",
+    "pathban":{
+        "HOV":[2],
+        "TRK":[2,3]},
+    "dcpnt":[7]
 }
