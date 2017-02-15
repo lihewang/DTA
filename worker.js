@@ -127,6 +127,7 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,callback) {
       //Construct path string and write to redis db
       redisClient.select(1);  //path db
       multi = redisClient.multi();
+      //zones
       for (var i = 1; i <= zonenum; i++) {
         var zonePair = zone + '-' + i;
         var path = i.toString();
@@ -141,6 +142,11 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,callback) {
         console.log(zonePair + ', ' + path); 
         multi.set(zonePair + ":path",path);       //write to redis db  
       } 
+      //decision point
+      if (par.dcpnt.indexOf(parseInt(zone)!=-1)){
+        console.log('decision pnt ' + zone);
+        
+      }
       multi.exec(function(){
         callback(null,zonePair + ',' + path); 
       });      

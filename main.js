@@ -35,9 +35,14 @@ async.series([
                     },
                     function(callback){
                         multi = redisClient.multi();
+                        //zones
                         for (var i = 1; i <= par.zonenum; i++) {                          
                             multi.rpush('to-do',i);      
                         }
+                        //decision point
+                        par.dcpnt.forEach(function(value){
+                            multi.rpush('to-do',value);
+                        });
                         multi.exec(function(){
                             callback();
                         });                    
