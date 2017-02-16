@@ -35,14 +35,16 @@ async.series([
                     },
                     function(callback){
                         multi = redisClient.multi();
-                        //zones
-                        for (var i = 1; i <= par.zonenum; i++) {                          
-                            multi.rpush('to-do',i);      
-                        }
-                        //decision point
-                        par.dcpnt.forEach(function(value){
-                            multi.rpush('to-do',value);
-                        });
+                        //timestep and zone
+                        for (var i = 1; i <= par.timesteps; i++) {
+                            for (var j = 1; j <= par.zonenum; j++) {                          
+                                multi.rpush('to-do',i + '-' + j);      
+                            }
+                            //decision point
+                            par.dcpnt.forEach(function(value){
+                                multi.rpush('to-do',i + '-' + value);
+                            });
+                        }                       
                         multi.exec(function(){
                             callback();
                         });                    
@@ -55,7 +57,7 @@ async.series([
             //make call
             function(callback){
                 request.post('http://localhost:8080',
-                {json:{'task':'sp','mode':'TRK','tp':50,'zonenum':3}},
+                {json:{'task':'sp','mode':'TRK','zonenum':3}},
                 function(error,response,body){
                     console.log('end of sp ' + body);
                     callback();

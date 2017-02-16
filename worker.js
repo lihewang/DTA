@@ -62,7 +62,6 @@ var rdcsv = function Readcsv(mode,callback) {
 
 //********find time dependent shortest path and write results to redis********
 var sp = function ShortestPath(zone,zonenum,tp,mode,callback) {
-      console.log("*** Find path for zone " + zone);
       //prepare network - remove links going out of other zones
       for (var i = 1; i <= zonenum; i++) {
         if(i != zone){
@@ -139,13 +138,13 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,callback) {
           }
           while (pNode != zone);
         } 
-        console.log(zonePair + ', ' + path); 
+        console.log(zonePair + ':' + tp + ', ' + path); 
         multi.set(zonePair + ":path",path);       //write to redis db  
       } 
       //decision point
       if (par.dcpnt.indexOf(parseInt(zone)!=-1)){
         console.log('decision pnt ' + zone);
-        
+
       }
       multi.exec(function(){
         callback(null,zonePair + ',' + path); 
@@ -157,52 +156,53 @@ var app = express();
 var router = express.Router();
 router.use(bodyParser.json());
 router.all('/', function(req,res,next){
-  var bdy =req.body;
+var bdy =req.body;
   //create shortest path
   if (bdy.task == 'sp'){ 
-    //get job  
-    var spZone = 0; 
+    //get job
+    var spZone = 0;
+    var timeStep = 0;   
     async.during(
       //loop until to-do list is null
-      //test function
+      //test function 
       function(cb){ 
-          console.log('begin loop');
+          console.log('***begin shortest path loop***');
+          spZone = 0;
+          timeStep = 0;
           redisClient.select(6);       //task db 
           async.series([
             function(callback){
-              redisClient.rpoplpush('to-do','doing', function(err, result) {               
-                spZone = result; 
-                redisClient.lrange('to-do','0','3', function(err, result){
-                  console.log('to-do list ' + result);
-                });
-                callback(null,spZone);     
+                redisClient.lpop('to-do', function(err, result) {  
+                if(result != null){
+                  var ts = result.split('-');
+                  timeStep = ts[0];             
+                  spZone = ts[1]; 
+                }
+                callback();     
               });              
             }],
             function(err,results){
-              console.log('sp zone ' + spZone);
+              console.log('find sp for time step ' + timeStep + ', sp zone ' + spZone);
               return cb(null,spZone>0);
           });                           
       },
-      //repeating function
+      //function 
       function(callback){
-          console.log('repeating');
           async.series([
           function(cb){
             //read network
             rdcsv(bdy.mode,function(err,result){
                 cb(null,result);
-                console.log('run rdcsv ' + result);
             });          
           },
           function(cb){
             //create shortest path
-            sp(spZone,bdy.zonenum,bdy.tp,bdy.mode,function(err,result){
+            sp(spZone,bdy.zonenum,timeStep,bdy.mode,function(err,result){
                 console.log('run sp ' + result);
                 cb(null,result);
             });
           }       
           ],function(err,results){
-              console.log('read csv ' + results[1]);
               callback(); 
           }); 
       },
