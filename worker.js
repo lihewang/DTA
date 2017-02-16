@@ -23,7 +23,7 @@ var eventEmitter = new events.EventEmitter();
 var par = JSON.parse(fs.readFileSync("./Data/parameters.json"));
 
 //********csv reader********
-var rdcsv = function Readcsv(mode,callback) {
+var rdcsv = function Readcsv(mode,pType,spZone,callback) {
   nodeHash.clear();
   //get banning facility type
   if(mode=="HOV"){
@@ -41,27 +41,46 @@ var rdcsv = function Readcsv(mode,callback) {
         }
         distHash.put(data['ID'], data['Dist']);
          //network topology
+         var banLink = false;
          if (ftypeBan.indexOf(parseInt(data['Ftype']))==-1){  //if a link is not banned
-            var abnode = data['ID'].split('-');   
-            if (nodeHash.has(abnode[0])){          
-               var value = nodeHash.get(abnode[0]);
-              value.push(abnode[1]);
-              nodeHash.put(abnode[0],value);
-              console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
-            }else{
-              nodeHash.put(abnode[0],[abnode[1]]);
-              console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
+            var abnode = data['ID'].split('-'); 
+            //for decision point 
+            if(pType != 'zone' && abnode[0] == spZone){
+              console.log('read dp zone ' + spZone);
+              if(pType == 'tf' && parseInt(data['Ftype']) == par.ftypeexonrp){
+                banLink = true;
+              }
+              if(pType == 'tf' && parseInt(data['Ftype']) != par.ftypeexoffrp){
+                banLink = true;
+              }
+              if(pType == 'tl' && parseInt(data['Ftype']) != par.ftypeexonrp){
+                banLink = true;
+              }
+              if(pType == 'tl' && parseInt(data['Ftype']) == par.ftypeexoffrp){
+                banLink = true;
+              }
+            } 
+            if(banLink != true){
+              if (nodeHash.has(abnode[0])){          
+                var value = nodeHash.get(abnode[0]);
+                value.push(abnode[1]);
+                nodeHash.put(abnode[0],value);
+                console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
+              }else{
+                nodeHash.put(abnode[0],[abnode[1]]);
+                console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
+              }
             }
          }           
       })
-      .on("end", function(){
+      .on("end", function(){      
         callback(null,'read links done');
       });     
   stream.pipe(csvStream);      
 }
 
 //********find time dependent shortest path and write results to redis********
-var sp = function ShortestPath(zone,zonenum,tp,mode,callback) {
+var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
       //prepare network - remove links going out of other zones
       for (var i = 1; i <= zonenum; i++) {
         if(i != zone){
@@ -137,9 +156,13 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,callback) {
            path = pNode.toString() + ',' + path;      
           }
           while (pNode != zone);
-        } 
-        console.log(zonePair + ':' + tp + ', ' + path); 
-        multi.set(zonePair + ":path",path);       //write to redis db  
+        }else{
+          path = null
+        }       
+        if(path != null){
+          multi.set(tp + ":" + zonePair + ":path" + ":" + pathType, path);       //write to redis db, example 3:7-2:path 
+          console.log(tp + ":" + zonePair + ":path" + ":" + pathType + ', ' + path); 
+        }
       } 
       //decision point
       if (par.dcpnt.indexOf(parseInt(zone)!=-1)){
@@ -161,7 +184,8 @@ var bdy =req.body;
   if (bdy.task == 'sp'){ 
     //get job
     var spZone = 0;
-    var timeStep = 0;   
+    var timeStep = 0; 
+    var pathType = 'zone';  
     async.during(
       //loop until to-do list is null
       //test function 
@@ -177,6 +201,10 @@ var bdy =req.body;
                   var ts = result.split('-');
                   timeStep = ts[0];             
                   spZone = ts[1]; 
+                  if (ts.length > 2){
+                    //decision point
+                    pathType = ts[2];
+                  }
                 }
                 callback();     
               });              
@@ -191,13 +219,13 @@ var bdy =req.body;
           async.series([
           function(cb){
             //read network
-            rdcsv(bdy.mode,function(err,result){
+            rdcsv(bdy.mode,pathType,spZone,function(err,result){
                 cb(null,result);
             });          
           },
           function(cb){
             //create shortest path
-            sp(spZone,bdy.zonenum,timeStep,bdy.mode,function(err,result){
+            sp(spZone,bdy.zonenum,timeStep,bdy.mode,pathType,function(err,result){
                 console.log('run sp ' + result);
                 cb(null,result);
             });

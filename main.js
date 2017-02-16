@@ -42,7 +42,8 @@ async.series([
                             }
                             //decision point
                             par.dcpnt.forEach(function(value){
-                                multi.rpush('to-do',i + '-' + value);
+                                multi.rpush('to-do',i + '-' + value + '-tl');
+                                multi.rpush('to-do',i + '-' + value + '-tf');
                             });
                         }                       
                         multi.exec(function(){
@@ -71,6 +72,7 @@ async.series([
     //move vehicles
     function(callback){
         console.log('start of moving vehicles');
+        callback();
     }
 
 ],
