@@ -46,17 +46,11 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
             var abnode = data['ID'].split('-'); 
             //for decision point 
             if(pType != 'zone' && abnode[0] == spZone){
-              console.log('read dp zone ' + spZone);
-              if(pType == 'tf' && parseInt(data['Ftype']) == par.ftypeexonrp){
+              if(pType == 'tf' && (parseInt(data['Ftype']) == par.ftypeexonrp||parseInt(data['Ftype']) == par.ftypeex)){
                 banLink = true;
+                console.log("dp ban link " + data['ID']);
               }
-              if(pType == 'tf' && parseInt(data['Ftype']) != par.ftypeexoffrp){
-                banLink = true;
-              }
-              if(pType == 'tl' && parseInt(data['Ftype']) != par.ftypeexonrp){
-                banLink = true;
-              }
-              if(pType == 'tl' && parseInt(data['Ftype']) == par.ftypeexoffrp){
+              if(pType == 'tl' && (parseInt(data['Ftype']) == par.ftypegp||parseInt(data['Ftype']) == par.ftypeexoffrp)){
                 banLink = true;
               }
             } 
@@ -65,10 +59,10 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
                 var value = nodeHash.get(abnode[0]);
                 value.push(abnode[1]);
                 nodeHash.put(abnode[0],value);
-                console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
+                console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "], pathType:" + pType);
               }else{
                 nodeHash.put(abnode[0],[abnode[1]]);
-                console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "]");
+                console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "], pathType:" + pType);
               }
             }
          }           
@@ -204,6 +198,8 @@ var bdy =req.body;
                   if (ts.length > 2){
                     //decision point
                     pathType = ts[2];
+                  }else{
+                    pathType = 'zone';
                   }
                 }
                 callback();     
