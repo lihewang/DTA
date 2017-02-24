@@ -154,18 +154,26 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
           path = null
         }       
         if(path != null){
-          multi.set(tp + ":" + zonePair + ":path" + ":" + pathType, path);       //write to redis db, example 3:7-2:path 
-          console.log(tp + ":" + zonePair + ":path" + ":" + pathType + ', ' + path); 
+          multi.set(tp + ":" + zonePair + ":" + pathType, path);       //write to redis db, example 3:7-2:path
+          //decision point path skims
+          if (par.dcpnt.indexOf(parseInt(zone))!=-1){
+            var dpPath = path.split(',');
+            var skimTime = 0;
+            var skimDist = 0;
+            for (var j = 0; j <= dpPath.length-2; j++) {
+                skimTime = skimTime + parseFloat(timeHash.get(dpPath[j] + '-' + dpPath[j+1] + ':' + tp));
+                skimDist = skimDist + parseFloat(distHash.get(dpPath[j] + '-' + dpPath[j+1]));
+                console.log(tp + ":" + zonePair + ":" + pathType + ', skim time ' + skimTime); 
+            }
+            multi.set(tp + ":" + zonePair + ":" + pathType + ":time", skimTime);
+            multi.set(tp + ":" + zonePair + ":" + pathType + ":dist", skimDist);
+          }
+          console.log(tp + ":" + zonePair + ":" + pathType + ', ' + path); 
         }
       } 
-      //decision point
-      if (par.dcpnt.indexOf(parseInt(zone)!=-1)){
-        console.log('decision pnt ' + zone);
-
-      }
-      multi.exec(function(){
-        callback(null,zonePair + ',' + path); 
-      });      
+      multi.exec(function(err,results){      
+        callback(null,zone);
+      });         
 }
 
 //********http listener********
