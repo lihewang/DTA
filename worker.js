@@ -36,8 +36,9 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
   var csvStream = csv({headers : true})
       .on("data", function(data){
         //create time hash table
-        for (var i = 1; i <= par.timesteps; i++) {
-          timeHash.put(data['ID'] + ':' + i.toString,data['T' + i.toString]);
+        for (var i = 1; i <= par.timesteps; i++) { 
+          timeHash.put(data['ID'] + ':' + i, data['T' + i]);
+          var t = timeHash.get(data['ID'] + ':' + i);
         }
         distHash.put(data['ID'], data['Dist']);
          //network topology
@@ -91,7 +92,7 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
       var cnt = 1;    //count visited zones
       var visitedNodes = new hashtable();       //track visited nodes, {node,time}
       var settledNodes = new hashtable();
-      var parentNodes = new hashtable();        //track parent nodes, {node, parent node}      
+      var parentNodes = new hashtable();        //track parent nodes, {node, parent node}    
       var currNode = zone;
       visitedNodes.put(zone,0);            //root node
       pqNodes.enq({t:0,nd:currNode}); 
@@ -105,11 +106,10 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
           var dnNodes = nodeHash.get(currNode);  //get new frontier nodes
           //Update time on new nodes
           dnNodes.forEach(function(dnNode) {
-
               if (!settledNodes.has(dnNode)) {    //exclude settled nodes
                   //get time of dnNode
                   var timeCurrNode = parseFloat(visitedNodes.get(currNode));
-                  var timePeriod = math.min(par.timesteps,math.floor(timeCurrNode/15)+tp);
+                  var timePeriod = math.min(par.timesteps, math.floor(timeCurrNode/15) + parseInt(tp));
                   var tempTime = timeCurrNode + parseFloat(timeHash.get(currNode + '-' + dnNode + ':' + timePeriod));
 
                   if (visitedNodes.has(dnNode)){
@@ -127,7 +127,6 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
                       visitedNodes.put(dnNode,tempTime);
                       //console.log('visit first time ' + dnNode + ', ' + tempTime);
                   }
-
               }  //end if
              
           }); //end forEach
@@ -158,14 +157,11 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
           //decision point path skims
           if (par.dcpnt.indexOf(parseInt(zone))!=-1){
             var dpPath = path.split(',');
-            var skimTime = 0;
             var skimDist = 0;
             for (var j = 0; j <= dpPath.length-2; j++) {
-                skimTime = skimTime + parseFloat(timeHash.get(dpPath[j] + '-' + dpPath[j+1] + ':' + tp));
                 skimDist = skimDist + parseFloat(distHash.get(dpPath[j] + '-' + dpPath[j+1]));
-                console.log(tp + ":" + zonePair + ":" + pathType + ', skim time ' + skimTime); 
             }
-            multi.set(tp + ":" + zonePair + ":" + pathType + ":time", skimTime);
+            multi.set(tp + ":" + zonePair + ":" + pathType + ":time", visitedNodes.get(i));
             multi.set(tp + ":" + zonePair + ":" + pathType + ":dist", skimDist);
           }
           console.log(tp + ":" + zonePair + ":" + pathType + ', ' + path); 
