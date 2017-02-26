@@ -36,17 +36,19 @@ async.series([
                     },
                     function(callback){
                         multi = redisClient.multi();
-                        //timestep and zone
-                        for (var i = 1; i <= par.timesteps; i++) {
-                            for (var j = 1; j <= par.zonenum; j++) {                          
-                                multi.rpush('to-do',i + '-' + j);      
+                        //mode, timestep and start zone
+                        par.modes.forEach(function(md){                       
+                            for (var i = 1; i <= par.timesteps; i++) {
+                                for (var j = 1; j <= par.zonenum; j++) {                          
+                                    multi.rpush('to-do',i + '-' + j + '-' + md);      
+                                }
+                                //decision point
+                                par.dcpnt.forEach(function(dcp){
+                                    multi.rpush('to-do',i + '-' + dcp + '-' + md + '-tl');
+                                    multi.rpush('to-do',i + '-' + dcp + '-' + md + '-tf');
+                                });
                             }
-                            //decision point
-                            par.dcpnt.forEach(function(value){
-                                multi.rpush('to-do',i + '-' + value + '-tl');
-                                multi.rpush('to-do',i + '-' + value + '-tf');
-                            });
-                        }                       
+                        });                                              
                         multi.exec(function(){
                             callback();
                         });                    
@@ -59,7 +61,7 @@ async.series([
             //make call
             function(callback){
                 request.post('http://localhost:8080',
-                {json:{'task':'sp','mode':'TRK','zonenum':3}},
+                {json:{'task':'sp'}},
                 function(error,response,body){
                     console.log('end of sp ' + body);
                     callback();
@@ -107,7 +109,12 @@ async.series([
             },
             //make call
             function(callback){
-
+                request.get('http://localhost:8080',
+                {json:{'task':'mv'}},
+                function(error,response,body){
+                    console.log('end of move vehicles ' + body);
+                    callback();
+                });
             }],
         function(err,results){
             callback(); //move vehicles callback

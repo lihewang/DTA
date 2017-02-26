@@ -32,7 +32,7 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
     var ftypeBan = par.pathban.TRK;
   }
 
-  var stream = fs.createReadStream("./Data/" + par.linkfilename)
+  var stream = fs.createReadStream("./Data/" + par.linkfilename);
   var csvStream = csv({headers : true})
       .on("data", function(data){
         //create time hash table
@@ -176,13 +176,14 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
 var app = express();
 var router = express.Router();
 router.use(bodyParser.json());
-router.all('/', function(req,res,next){
-var bdy =req.body;
+router.post('/', function(req,res,next){
+  var bdy =req.body;
+  console.log('task ' + bdy.task);
   //create shortest path
   if (bdy.task == 'sp'){ 
-    //get job
     var spZone = 0;
     var timeStep = 0; 
+    var mode = '';
     var pathType = 'zone';  
     async.during(
       //loop until to-do list is null
@@ -194,14 +195,16 @@ var bdy =req.body;
           redisClient.select(6);       //task db 
           async.series([
             function(callback){
+                //get job
                 redisClient.lpop('to-do', function(err, result) {  
                 if(result != null){
                   var ts = result.split('-');
                   timeStep = ts[0];             
                   spZone = ts[1]; 
-                  if (ts.length > 2){
+                  mode = ts[2];
+                  if (ts.length > 3){
                     //decision point
-                    pathType = ts[2];
+                    pathType = ts[3];
                   }else{
                     pathType = 'zone';
                   }
@@ -219,13 +222,13 @@ var bdy =req.body;
           async.series([
           function(cb){
             //read network
-            rdcsv(bdy.mode,pathType,spZone,function(err,result){
+            rdcsv(mode,pathType,spZone,function(err,result){
                 cb(null,result);
             });          
           },
           function(cb){
             //create shortest path
-            sp(spZone,bdy.zonenum,timeStep,bdy.mode,pathType,function(err,result){
+            sp(spZone,par.zonenum,timeStep,mode,pathType,function(err,result){
                 console.log('run sp ' + result);
                 cb(null,result);
             });
@@ -239,15 +242,57 @@ var bdy =req.body;
           console.log('end loop ' + results);
       }    
     );
-
   }
-  //move vehicles
-  if (bdy.task == 'mv'){ 
 
-  }
   console.log('total zone ' + bdy.zonenum);
   res.send('csv read');
-})
+});
+router.get('/', function(req,res,next){
+  var bdy =req.body;
+  //move vehicles
+  if (bdy.task == 'mv'){ 
+    var zi = 0;
+    var zj = 0;
+    var tp = 0;
+    var mode = 0;
+    var vol = 0;
+    async.during(
+      //loop until to-do list is null
+      //test function 
+      function(callback){ 
+        console.log('***begin moving vehicles loop***');
+        redisClient.select(7);       //task db 
+        async.series([
+          function(callback){
+            redisClient.lpop('to-do', function(err, result) {
+              if(result != null){
+                var rs = result.split('-');
+                zi = rs[0];
+                zj = rs[1];
+                tp = rs[2];
+                mode = rs[3];
+                vol = rs[4];
+              }
+              callback();
+            });
+          }],
+          function(err,results){
+              console.log('move vehicle packet ' + zi + ' to ' + zj);
+              return callback(null,zi>0);
+          });
+      },
+      //function 
+      function(callback){
+
+      },
+      //whilst callback
+      function(err,results){
+          console.log('end moving vehicle loop ' + results);
+      }
+    );
+  }
+  res.send('end moving vehicles');
+});
 app.use('/', router);
 var server = app.listen(8080);
 
