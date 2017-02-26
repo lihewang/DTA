@@ -4,6 +4,7 @@ var request = require('request');
 //var gapi = require('./google_api.js');
 var async = require('async');
 var fs = require('fs');
+var csv = require('fast-csv');
 
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
 
@@ -72,17 +73,46 @@ async.series([
     //move vehicles
     function(callback){
         console.log('start of moving vehicles');
-        callback();
-    }
+        async.series([
+            //put task to db
+            function(callback){               
+                async.series([
+                    function(callback){
+                        multi = redisClient.multi();
+                        //clear task db
+                        multi.select(7);  
+                        multi.flushdb();                     
+                        multi.exec(function(){
+                            callback();
+                        });
+                    },
+                    function(callback){
+                        //read trip table input
+                        var stream = fs.createReadStream("./Data/" + par.triptablefilename);
+                        var csvStream = csv({headers : true})
+                            .on("data", function(data){
+                                //multi = redisClient.multi();
+                                multi.rpush('to-do', data['I']+'-'+data['J']+'-'+data['TP']+'-'+data['Mode']+'-'+data['Vol']);
+                            })
+                            .on("end", function(){  
+                                multi.exec(function(){
+                                    callback(null,'read trip table done');
+                                });                                                  
+                            });    
+                        stream.pipe(csvStream); 
+                    }],
+                    function(err,results){
+                        callback(); 
+                    }); 
+            },
+            //make call
+            function(callback){
 
-],
+            }],
+        function(err,results){
+            callback(); //move vehicles callback
+        }); 
+    }],
     function(err,results){
 
-    });
-
-
-
-
-
-
-
+});
