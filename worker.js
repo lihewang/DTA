@@ -176,7 +176,7 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
 var app = express();
 var router = express.Router();
 router.use(bodyParser.json());
-router.post('/', function(req,res,next){
+router.get('/', function(req,res){
   var bdy =req.body;
   console.log('task ' + bdy.task);
   //create shortest path
@@ -240,30 +240,25 @@ router.post('/', function(req,res,next){
       //whilst callback
       function(err,results){
           console.log('end loop ' + results);
+          res.send('sp finished');
       }    
     );
   }
-
-  console.log('total zone ' + bdy.zonenum);
-  res.send('csv read');
-});
-router.get('/', function(req,res,next){
-  var bdy =req.body;
   //move vehicles
-  if (bdy.task == 'mv'){ 
+  else if(bdy.task == 'mv'){
     var zi = 0;
     var zj = 0;
     var tp = 0;
     var mode = 0;
     var vol = 0;
+    console.log('***begin moving vehicles loop***');
     async.during(
       //loop until to-do list is null
       //test function 
-      function(callback){ 
-        console.log('***begin moving vehicles loop***');
-        redisClient.select(7);       //task db 
+      function(callback){               
         async.series([
           function(callback){
+            redisClient.select(7);       //task db 
             redisClient.lpop('to-do', function(err, result) {
               if(result != null){
                 var rs = result.split('-');
@@ -283,16 +278,27 @@ router.get('/', function(req,res,next){
       },
       //function 
       function(callback){
+        redisClient.select(1); //sp db
+        var pathType = "zone";
+        if (par.dcpnt.indexOf(parseInt(zi))!=-1){
+          //decision point
 
+        }else{
+          redisClient.get(tp + ":" + zi + "-" + zj + ":" + pathType,function(err,result){
+            console.log(tp + ":" + zi + ":" + zj  + ":" + pathType + " " + result);
+            callback();
+          });
+        }       
       },
       //whilst callback
       function(err,results){
           console.log('end moving vehicle loop ' + results);
+          res.send('mv finished');
       }
     );
   }
-  res.send('end moving vehicles');
 });
+
 app.use('/', router);
 var server = app.listen(8080);
 

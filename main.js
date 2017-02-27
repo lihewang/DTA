@@ -60,10 +60,10 @@ async.series([
             },
             //make call
             function(callback){
-                request.post('http://localhost:8080',
+                request.get('http://localhost:8080',
                 {json:{'task':'sp'}},
                 function(error,response,body){
-                    console.log('end of sp ' + body);
+                    console.log(body);
                     callback();
                 });
             }],
@@ -109,6 +109,7 @@ async.series([
             },
             //make call
             function(callback){
+                console.log('start of call mv');
                 request.get('http://localhost:8080',
                 {json:{'task':'mv'}},
                 function(error,response,body){
