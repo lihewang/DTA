@@ -245,8 +245,8 @@ router.get('/', function(req,res){
     );
   }
   //move vehicles
-  else if(bdy.task == 'mv'){
-    var zi = 0;
+  else if(bdy.task == 'mv'){ 
+    var zi = 0;  
     var zj = 0;
     var tp = 0;
     var mode = 0;
@@ -258,6 +258,7 @@ router.get('/', function(req,res){
       function(callback){               
         async.series([
           function(callback){
+            zi = 0;
             redisClient.select(7);       //task db 
             redisClient.lpop('to-do', function(err, result) {
               if(result != null){
