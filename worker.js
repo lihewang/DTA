@@ -171,6 +171,53 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
         callback(null,zone);
       });         
 }
+//********move vehicle and write results to redis********
+var mv = function MoveVehicle(tp,zi,zj,pathType,mode,vol,path,callback) {
+  var arrPath = path.split(',');
+  var totTime = 0;
+  var tpNew = tp;
+  var keyValue = '';
+  redisClient.select(2);
+  multi = redisClient.multi();
+  var j = 0;
+  async.during(
+    //test function 
+    function(cb){
+      return cb(null,j <= arrPath.length-2);
+    },
+    function(callback){
+      async.series([
+            function(callback){ 
+              var linkID = arrPath[j] + '-' + arrPath[j+1] + ':' + tpNew; 
+              totTime = totTime + parseFloat(timeHash.get(linkID));
+              tpNew = parseInt(tp) + math.floor(totTime/15);
+              keyValue = linkID + ':' + tpNew + ':' + mode;
+              console.log(keyValue);
+              callback();
+            },
+            function(callback){
+              multi.exists(keyValue,function(err,reply) {
+                if(reply == 1){
+                  //keyvalue++
+                  console.log("exist");
+                  strEval = 'redis.call("set","' + keyValue + '",redis.call("get","' + keyValue + '")+' + vol.toString + ')';
+                  multi.eval(strEval,0);
+                }else{
+                  console.log(keyValue + ':' + vol);
+                  multi.set(keyValue,vol);
+                };
+              });
+              multi.exec(function(err,results){      
+                callback(null,results);
+              });
+          }],
+          function(err,results){ 
+            console.log('loop ' + j);
+            j = j + 1;
+          })
+  });
+  callback();
+}
 
 //********http listener********
 var app = express();
@@ -286,8 +333,12 @@ router.get('/', function(req,res){
 
         }else{
           redisClient.get(tp + ":" + zi + "-" + zj + ":" + pathType,function(err,result){
+            //move vehicle
             console.log(tp + ":" + zi + ":" + zj  + ":" + pathType + " " + result);
-            callback();
+            mv(tp,zi,zj,pathType,mode,vol,result,function(err,result){
+                console.log('run mv ' + result);
+                callback();
+            });            
           });
         }       
       },
@@ -308,7 +359,7 @@ var server = app.listen(8080);
 //Write vol to redis
 var volHandler = function vol() {
     console.log("write to vol redis");
-    redisClient.select(1);
+    redisClient.select(2);
     redisClient.flushdb();
     var keyvalue = '1-3';
     redisClient.set(keyvalue,10);
