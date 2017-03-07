@@ -74,16 +74,19 @@ async.series([
     },
     //move vehicles
     function(callback){
-        console.log('start of moving vehicles');
+        console.log('***moving vehicles***');
         async.series([
             //put task to db
             function(callback){               
                 async.series([
                     function(callback){
                         multi = redisClient.multi();
+                        //clear link db
+                        multi.select(2);  
+                        multi.flushdb(); 
                         //clear task db
                         multi.select(7);  
-                        multi.flushdb();                     
+                        multi.flushdb();                                         
                         multi.exec(function(){
                             callback();
                         });
@@ -91,9 +94,10 @@ async.series([
                     function(callback){
                         //read trip table input
                         var stream = fs.createReadStream("./Data/" + par.triptablefilename);
+                        multi = redisClient.multi();
+                        multi.select(7); 
                         var csvStream = csv({headers : true})
-                            .on("data", function(data){
-                                //multi = redisClient.multi();
+                            .on("data", function(data){                              
                                 multi.rpush('to-do', data['I']+'-'+data['J']+'-'+data['TP']+'-'+data['Mode']+'-'+data['Vol']);
                             })
                             .on("end", function(){  
@@ -109,7 +113,7 @@ async.series([
             },
             //make call
             function(callback){
-                console.log('start of call mv');
+                console.log('call mv');
                 request.get('http://localhost:8080',
                 {json:{'task':'mv'}},
                 function(error,response,body){

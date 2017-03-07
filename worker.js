@@ -172,17 +172,18 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
       });         
 }
 //********move vehicle and write results to redis********
-var mv = function MoveVehicle(tp,zi,zj,pathType,mode,vol,path,callback) {
+var mv = function MoveVehicle(tp,zi,zj,pathType,mode,vol,path,cb) {
   var arrPath = path.split(',');
   var totTime = 0;
   var tpNew = tp;
   var keyValue = '';
   redisClient.select(2);
-  multi = redisClient.multi();
+  //multi = redisClient.multi();
   var j = 0;
   async.during(
     //test function 
     function(cb){
+      console.log('loop start ' + j)
       return cb(null,j <= arrPath.length-2);
     },
     function(callback){
@@ -196,27 +197,39 @@ var mv = function MoveVehicle(tp,zi,zj,pathType,mode,vol,path,callback) {
               callback();
             },
             function(callback){
-              multi.exists(keyValue,function(err,reply) {
-                if(reply == 1){
-                  //keyvalue++
-                  console.log("exist");
-                  strEval = 'redis.call("set","' + keyValue + '",redis.call("get","' + keyValue + '")+' + vol.toString + ')';
-                  multi.eval(strEval,0);
-                }else{
-                  console.log(keyValue + ':' + vol);
-                  multi.set(keyValue,vol);
-                };
-              });
-              multi.exec(function(err,results){      
-                callback(null,results);
-              });
+              async.series([
+                function(callback){
+                  redisClient.exists(keyValue,function(err,reply) {
+                    if(reply == 1){
+                      //keyvalue++
+                      console.log("exist");
+                      strEval = 'redis.call("set","' + keyValue + '",redis.call("get","' + keyValue + '")+' + vol + ')';
+                      redisClient.eval(strEval,0, function(err,reply){
+                        console.log(err);
+                        callback();
+                      });
+                    }else{
+                      console.log('set ' + keyValue + ':' + vol);
+                      redisClient.set(keyValue,vol,function(err,reply){
+                        callback();
+                      });
+                    };                   
+                  });
+                }],
+                function(err,results){
+                  callback(null,results);
+                })            
           }],
-          function(err,results){ 
-            console.log('loop ' + j);
-            j = j + 1;
+          function(err,results){
+            j = j + 1; 
+            console.log('loop end ' + j); 
+            callback();  
+                  
           })
-  });
-  callback();
+  },
+  function(err){
+    cb(null,keyValue); 
+  }); 
 }
 
 //********http listener********
