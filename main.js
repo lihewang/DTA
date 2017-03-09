@@ -40,12 +40,12 @@ async.series([
                         par.modes.forEach(function(md){                       
                             for (var i = 1; i <= par.timesteps; i++) {
                                 for (var j = 1; j <= par.zonenum; j++) {                          
-                                    multi.rpush('to-do',i + '-' + j + '-' + md);      
+                                    multi.rpush('to-do',i + '-' + j + '-' + md);  //tp-zone-SOV    
                                 }
                                 //decision point
                                 par.dcpnt.forEach(function(dcp){
-                                    multi.rpush('to-do',i + '-' + dcp + '-' + md + '-tl');
-                                    multi.rpush('to-do',i + '-' + dcp + '-' + md + '-tf');
+                                    multi.rpush('to-do',i + '-' + dcp + '-' + md + '-tl'); //tp-zone-SOV-tl
+                                    multi.rpush('to-do',i + '-' + dcp + '-' + md + '-tf'); //tp-zone-SOV-tf
                                 });
                             }
                         });                                              
