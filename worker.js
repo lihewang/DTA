@@ -191,19 +191,26 @@ var mv = function MoveVehicle(tp,zi,zj,pathType,mode,vol,path,cb) {
       return cb(null,j <= arrPath.length-2);
     },
     function(callback){
-      if (par.dcpnt.indexOf(parseInt(j))!=-1){
+      if (par.dcpnt.indexOf(parseInt(arrPath[j]))!=-1){
         //decision point
-        var zonePair = j + "-" + zj;
+        var zonePair  = arrPath[j] + "-" + zj;
         async.series([
             function(callback){
+              var timeTl = 0;
+              var timeTf = 0;
               multi.select(1);
-              var timeTl = multi.get(tp + ":" + zonePair + ":" + mode + ":tl:time");
-              var timeTf = multi.get(tp + ":" + zonePair + ":" + mode + ":tf:time");
+              multi.get(tp + ":" + zonePair + ":" + mode + ":tl:time",function(err,result){
+                timeTl = result;
+              });
+              multi.get(tp + ":" + zonePair + ":" + mode + ":tf:time",function(err,result){
+                timeTf = result;
+              });
               var distTl = multi.get(tp + ":" + zonePair + ":" + mode + ":tl:dist");
               var distTf = multi.get(tp + ":" + zonePair + ":" + mode + ":tf:dist");
-              var Toll = multi.get(tp + ":" + zonePair + ":" + mode + ":tl:toll");
+              var Toll = multi.get(tp + ":" + zonePair  + ":" + mode + ":tl:toll");
               multi.exec(function(err,results){ 
-                console.log('dpnt timeTl=' + timeTl);   
+                console.log('dpnt timeTl=' + timeTl); 
+
                 callback(null,results);
               })
             }
