@@ -98,7 +98,7 @@ async.series([
                         multi.select(7); 
                         var csvStream = csv({headers : true})
                             .on("data", function(data){                              
-                                multi.rpush('to-do', data['I']+'-'+data['J']+'-'+data['TP']+'-'+data['Mode']+'-'+data['Vol']);
+                                multi.rpush('to-do', data['I']+'-'+data['J']+'-'+data['TP']+'-'+data['Mode']+'-'+data['Vol']+'-zone');
                             })
                             .on("end", function(){  
                                 multi.exec(function(){

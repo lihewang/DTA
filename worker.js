@@ -15,6 +15,7 @@ var timeHash = new hashtable();     //link time
 var distHash = new hashtable();     //link distance
 var nodeHash = new hashtable();     //network topology
 var tollHash = new hashtable();     //toll on the link
+var timeFFHash = new hashtable();   //free flow time on link
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
 var scriptManager = new Scripto(redisClient);
 scriptManager.loadFromFile('task','./task.lua');
@@ -38,10 +39,10 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
         //create time hash table
         for (var i = 1; i <= par.timesteps; i++) { 
           timeHash.put(data['ID'] + ':' + i, data['T' + i]);
-          tollHash.put(data['ID'] + ':' + i, data['TR' + i]);
-          //var t = timeHash.get(data['ID'] + ':' + i);
+          tollHash.put(data['ID'] + ':' + i, data['TR' + i]);        
         }
         distHash.put(data['ID'], data['Dist']);
+        timeFFHash.put(data['ID'],data['Dist']/data['Spd']*60);
          //network topology
          var banLink = false;
          if (ftypeBan.indexOf(parseInt(data['Ftype']))==-1){  //if a link is not banned
@@ -160,13 +161,16 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
             var dpPath = path.split(',');
             var skimDist = 0;
             var skimToll = 0;
+            var skimFFtime = 0;
             for (var j = 0; j <= dpPath.length-2; j++) {
                 skimDist = skimDist + parseFloat(distHash.get(dpPath[j] + '-' + dpPath[j+1]));
                 skimToll = skimToll + parseFloat(tollHash.get(dpPath[j] + '-' + dpPath[j+1]));
+                skimFFtime = skimFFtime + parseFloat(timeFFHash.get(dpPath[j] + '-' + dpPath[j+1]));
             }
             multi.set(tp + ":" + zonePair + ":" + mode + ":" + pathType + ":time", visitedNodes.get(i));
             multi.set(tp + ":" + zonePair + ":" + mode + ":" + pathType + ":dist", skimDist);
             multi.set(tp + ":" + zonePair + ":" + mode + ":" + pathType + ":toll", skimToll);
+            multi.set(tp + ":" + zonePair + ":" + mode + ":" + pathType + ":fftime", skimFFtime);
           }
           console.log(tp + ":" + zonePair + ":" + pathType + ', ' + path); 
         }
@@ -177,27 +181,35 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
 }
 
 //********move vehicle and write results to redis********
-var mv = function MoveVehicle(tp,zi,zj,pathType,mode,vol,path,cb) {
+var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,cb) {
   var arrPath = path.split(',');
   var totTime = 0;
   var tpNew = tp;
   var keyValue = ''; 
   multi = redisClient.multi();
   var j = 0;
+  var breakloop = false;
+  //move along path links
   async.during(
     //test function 
     function(cb){
       console.log('loop start ' + j);
-      return cb(null,j <= arrPath.length-2);
+      return cb(null,j <= arrPath.length-2 && !breakloop);
     },
     function(callback){
-      if (par.dcpnt.indexOf(parseInt(arrPath[j]))!=-1){
-        //decision point
+      if (par.dcpnt.indexOf(parseInt(arrPath[j]))!=-1 && j>0){
+        //decision point (not the start node in path)
         var zonePair  = arrPath[j] + "-" + zj;
+        var probility = 0;
         async.series([
             function(callback){
               var timeTl = 0;
               var timeTf = 0;
+              var distTl = 0;
+              var distTf = 0;
+              var Toll = 0;
+              var timeFFTl = 0;
+              var timeFFTf = 0;              
               multi.select(1);
               multi.get(tp + ":" + zonePair + ":" + mode + ":tl:time",function(err,result){
                 timeTl = result;
@@ -205,17 +217,70 @@ var mv = function MoveVehicle(tp,zi,zj,pathType,mode,vol,path,cb) {
               multi.get(tp + ":" + zonePair + ":" + mode + ":tf:time",function(err,result){
                 timeTf = result;
               });
-              var distTl = multi.get(tp + ":" + zonePair + ":" + mode + ":tl:dist");
-              var distTf = multi.get(tp + ":" + zonePair + ":" + mode + ":tf:dist");
-              var Toll = multi.get(tp + ":" + zonePair  + ":" + mode + ":tl:toll");
-              multi.exec(function(err,results){ 
-                console.log('dpnt timeTl=' + timeTl); 
-
+              multi.get(tp + ":" + zonePair + ":" + mode + ":tl:dist",function(err,result){
+                distTl = result;
+              });
+              multi.get(tp + ":" + zonePair + ":" + mode + ":tf:dist",function(err,result){
+                distTf = result;
+              });
+              multi.get(tp + ":" + zonePair  + ":" + mode + ":tl:toll",function(err,result){
+                Toll = result;
+              });
+              multi.get(tp + ":" + zonePair + ":" + mode + ":tl:fftime",function(err,result){
+                timeFFTl = result;
+              });
+              multi.get(tp + ":" + zonePair + ":" + mode + ":tf:fftime",function(err,result){
+                timeFFTf = result;
+              });
+              multi.exec(function(err,results){                                
+                if(distTl > distTf * parseFloat(par.distmaxfactor)){
+                  probility = 0;
+                  console.log(distTl + ',' + distTf + ' probility = 0');
+                }else if(distTf > distTl * parseFloat(par.distmaxfactor)){
+                  probility = 1;
+                }else{
+                  var utility = -1 * par.choicemodel.tollconst - (par.choicemodel.scalestdlen/distTl)  
+                  ^ par.choicemodel.scalealpha * (par.choicemodel.timecoeff * (timeTl - timeTf)) 
+                  + par.choicemodel.tollcoeff * Toll + par.choicemodel.timecoeff * par.choicemodel.reliacoeffratio
+                  * par.choicemodel.reliacoefftime * ((timeFFTf - timeTf) * distTf ^ (-1 * par.choicemodel.reliacoeffdist)
+                  - (timeFFTl -timeTl) * distTl ^ (-1 * par.choicemodel.reliacoeffdist));
+                  console.log(distTl + ',' + distTf + ' probility = ' + probility);
+                  probility = 1 / (1 + math.exp(utility));
+                }
                 callback(null,results);
               })
-            }
-          ])
-        
+            },
+            function(callback){
+              //put to to-do list
+              var pathType = [];
+              var loopNum = 1;
+              var newVol = [];
+              if(probility == 0){
+                pathType[0] = 'tf';
+                newVol[0] = vol;
+              }else if(probility == 1){
+                pathType[0] = 'tl';
+                newVol[0] = vol;
+              }else{
+                loopNum = 2;
+                pathType[0] = 'tf';
+                pathType[1] = 'tl';
+                newVol[0] = vol * (1 - probility);
+                newVol[1] = vol * probility;
+              }
+              for (var i = 1; i <= loopNum; i++) {
+                multi = redisClient.multi();
+                multi.select(7);
+                multi.rpush('to-do', arrPath[j]+'-'+zj+'-'+tpNew+'-'+mode+'-'+newVol[i-1]+'-'+pathType[i-1]); 
+              }  
+              multi.exec(function(){
+                callback();
+              });           
+            }],
+            function(err,results){ 
+              breakloop = true;           
+              callback();                 
+            })       
       }else{
         //not a decision point
         async.series([
@@ -343,6 +408,7 @@ router.get('/', function(req,res){
     var tp = 0;
     var mode = 0;
     var vol = 0;
+    var pathType = '';
     console.log('***begin moving vehicles loop***');
     async.during(
       //loop until to-do list is null
@@ -360,6 +426,7 @@ router.get('/', function(req,res){
                 tp = rs[2];
                 mode = rs[3];
                 vol = rs[4];
+                pathType = rs[5];
               }
               callback();
             });
@@ -375,6 +442,15 @@ router.get('/', function(req,res){
         var pathType = "zone";
         if (par.dcpnt.indexOf(parseInt(zi))!=-1){
           //decision point
+          //get path
+          redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
+            //move vehicle
+            console.log(tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
+            mv(tp,zi,zj,pathType,mode,vol,result,function(err,result){
+                console.log('run mv ' + result);
+                callback();
+            });            
+          });
 
         }else{
           redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
