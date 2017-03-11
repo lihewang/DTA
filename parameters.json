@@ -1,8 +1,9 @@
 {
     "zonenum":3,
-    "timesteps":2,
+    "timesteps":96,
     "linkfilename":"links.csv",
     "triptablefilename":"triptable.csv",
+    "modes":["SOV","HOV","TRK"],
     "pathban":{
         "HOV":[2],
         "TRK":[2,3]},
@@ -10,5 +11,20 @@
     "ftypeexonrp":91,
     "ftypeexoffrp":92,
     "ftypeex":90,
-    "ftypegp":1
+    "ftypegp":1,
+    "choicemodel":{
+        "tollconst":[-0.6,-1.5],
+        "timecoeff":-0.117,
+        "tollcoeff":-0.584,
+        "reliacoeffratio":2,
+        "reliacoefftime":0.2,
+        "reliacoeffdist":0.1,
+        "perceivetimesteep":13.67,
+        "perceivetimemidvc":0.693,
+        "perceivetimemaxvc":1.2,
+        "oneelweight":1.28,
+        "scalestdlen":7.2,
+        "scalealpha":1
+    },
+    "distmaxfactor":1.1
 }
