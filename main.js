@@ -124,6 +124,14 @@ async.series([
         function(err,results){
             callback(); //move vehicles callback
         }); 
+    },
+    //write csv file
+    function(){
+        var rcd = [];
+        rcd.push(["linkid","tp","mode","vol"]);
+        var ws = fs.createWriteStream("vol.csv");
+        csv.write(rcd, {headers: true})
+            .pipe(ws);
     }],
     function(err,results){
 

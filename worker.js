@@ -439,7 +439,6 @@ router.get('/', function(req,res){
       //function 
       function(callback){
         redisClient.select(1); //sp db
-        var pathType = "zone";
         if (par.dcpnt.indexOf(parseInt(zi))!=-1){
           //decision point
           //get path
