@@ -126,12 +126,35 @@ async.series([
         }); 
     },
     //write csv file
-    function(){
+    function(callback){
         var rcd = [];
-        rcd.push(["linkid","tp","mode","vol"]);
-        var ws = fs.createWriteStream("vol.csv");
-        csv.write(rcd, {headers: true})
-            .pipe(ws);
+        async.series([
+            function(callback){
+                rcd.push(["linkid","tp","mode","vol"]);
+                redisClient.select(2);
+                redisClient.keys('*',function(err,results){
+                    multi = redisClient.multi();
+                    results.forEach(function(key){
+                        var arrKey = key.split(":");
+                        multi.get(key,function(err,result){                          
+                            rcd.push([arrKey[0],arrKey[1],arrKey[2],result])
+                        })                        
+                    })
+                    multi.exec(function(){
+                        callback();
+                    });
+                });
+            },
+            function(callback){
+                console.log(rcd);
+                var ws = fs.createWriteStream("vol.csv");
+                csv.write(rcd, {headers: true})
+                .pipe(ws);
+                callback();
+            }],
+            function(err,results){
+                callback(); 
+            });          
     }],
     function(err,results){
 

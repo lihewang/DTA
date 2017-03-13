@@ -285,11 +285,11 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,cb) {
         //not a decision point
         async.series([
             function(callback){ 
-              var linkID = arrPath[j] + '-' + arrPath[j+1] + ':' + tpNew; 
+              var linkID = arrPath[j] + '-' + arrPath[j+1] + ':' + tp; 
               totTime = totTime + parseFloat(timeHash.get(linkID));
               tpNew = parseInt(tp) + math.floor(totTime/15);
-              keyValue = linkID + ':' + tpNew + ':' + mode;
-              console.log(keyValue);
+              keyValue = arrPath[j] + '-' + arrPath[j+1] + ':' + tpNew + ':' + mode;
+              console.log(keyValue + ',totTime=' + totTime + ',tpNew=' + tpNew);
               callback();
             },
             function(callback){
