@@ -146,7 +146,6 @@ async.series([
                 });
             },
             function(callback){
-                console.log(rcd);
                 var ws = fs.createWriteStream("vol.csv");
                 csv.write(rcd, {headers: true})
                 .pipe(ws);
