@@ -17,11 +17,13 @@ var nodeHash = new hashtable();     //network topology
 var tollHash = new hashtable();     //toll on the link
 var timeFFHash = new hashtable();   //free flow time on link
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
-var scriptManager = new Scripto(redisClient);
-scriptManager.loadFromFile('task','./task.lua');
 var jsonParser = bodyParser.json();
 var eventEmitter = new events.EventEmitter();
 var par = JSON.parse(fs.readFileSync("./Data/parameters.json"));
+
+//load lua
+var scriptManager = new Scripto(redisClient);
+scriptManager.loadFromFile('task','./task.lua');
 
 //********csv reader********
 var rdcsv = function Readcsv(mode,pType,spZone,callback) {
@@ -253,6 +255,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,cb) {
             function(probility, callback){
               //recursive call mv
               var newVol = [];
+              redisClient.select(1);  //sp db
               if(probility == 0){
                 newVol[0] = vol;
                 redisClient.get(tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tf",function(err,result){
@@ -307,21 +310,9 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,cb) {
               redisClient.select(2);
               async.series([
                 function(callback){
-                  redisClient.exists(keyValue,function(err,reply) {
-                    if(reply == 1){
-                      //keyvalue++
-                      console.log("exist");
-                      strEval = 'redis.call("set","' + keyValue + '",redis.call("get","' + keyValue + '")+' + vol + ')';
-                      redisClient.eval(strEval,0, function(err,reply){
-                        console.log(err);
-                        callback();
-                      });
-                    }else{
-                      console.log('set ' + keyValue + ':' + vol);
-                      redisClient.set(keyValue,vol,function(err,reply){
-                        callback();
-                      });
-                    };                   
+                  scriptManager.run('task', [keyValue,vol], [], function(err, result) {
+                    console.log('lua ' + err + "," + result);
+                    callback();
                   });
                 }],
                 function(err,results){
