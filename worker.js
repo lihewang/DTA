@@ -1,5 +1,5 @@
 //Starting node
-var events = require('events');
+//var events = require('events');
 var hashtable = require('hashtable');
 var fs = require('fs');
 var csv = require('fast-csv');
@@ -18,10 +18,10 @@ var tollHash = new hashtable();     //toll on the link
 var timeFFHash = new hashtable();   //free flow time on link
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
 var jsonParser = bodyParser.json();
-var eventEmitter = new events.EventEmitter();
+//var eventEmitter = new events.EventEmitter();
 var par = JSON.parse(fs.readFileSync("./Data/parameters.json"));
 
-//load lua
+//load redis lua script
 var scriptManager = new Scripto(redisClient);
 scriptManager.loadFromFile('task','./task.lua');
 
@@ -29,11 +29,14 @@ scriptManager.loadFromFile('task','./task.lua');
 var rdcsv = function Readcsv(mode,pType,spZone,callback) {
   nodeHash.clear();
   //get banning facility type
-  if(mode=="HOV"){
+  if(mode == "HOV"){
     var ftypeBan = par.pathban.HOV;
-  }else{
+  }else if(mode == "TRK"){
     var ftypeBan = par.pathban.TRK;
+  }else{
+    var ftypeBan = [];
   }
+
 
   var stream = fs.createReadStream("./Data/" + par.linkfilename);
   var csvStream = csv({headers : true})
@@ -199,7 +202,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,cb) {
       return cb(null,j <= arrPath.length-2 && !breakloop);
     },
     function(callback){
-      if (par.dcpnt.indexOf(parseInt(arrPath[j]))!=-1 && j>0){
+      if (par.dcpnt.indexOf(parseInt(arrPath[j]))!=-1 && j>0 && mode == "SOV"){
         //decision point (not the start node in path)
         var zonePair  = arrPath[j] + "-" + zj;      
         async.waterfall([
@@ -241,13 +244,16 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,cb) {
                 }else if(distTf > distTl * parseFloat(par.distmaxfactor)){
                   probility = 1;
                 }else{
-                  var utility = -1 * par.choicemodel.tollconst - (par.choicemodel.scalestdlen/distTl)  
+                  var utility = -1 * par.choicemodel.tollconst[tp-1] - (par.choicemodel.scalestdlen/distTl)  
                   ^ par.choicemodel.scalealpha * (par.choicemodel.timecoeff * (timeTl - timeTf)) 
                   + par.choicemodel.tollcoeff * Toll + par.choicemodel.timecoeff * par.choicemodel.reliacoeffratio
                   * par.choicemodel.reliacoefftime * ((timeFFTf - timeTf) * distTf ^ (-1 * par.choicemodel.reliacoeffdist)
                   - (timeFFTl -timeTl) * distTl ^ (-1 * par.choicemodel.reliacoeffdist));
                   
                   probility = 1 / (1 + math.exp(utility));
+
+                  //console.log('probility calculation: tollconst=' + par.choicemodel.tollconst[0] + ',distTl=' + distTl
+                  //+ ',timeTl=' + timeTl);
                 }
                 callback(null,probility);
               })
@@ -477,25 +483,6 @@ var server = app.listen(8080);
 
 //process.exit(0); //End server 
 
-//Write vol to redis
-var volHandler = function vol() {
-    console.log("write to vol redis");
-    redisClient.select(2);
-    redisClient.flushdb();
-    var keyvalue = '1-3';
-    redisClient.set(keyvalue,10);
-    redisClient.exists(keyvalue,function(err,reply) {
-          if(reply == 1){
-            //keyvalue++
-            console.log("exist");
-            strEval = 'redis.call("set","' + keyvalue + '",redis.call("get","' + keyvalue + '")+100)';
-            redisClient.eval(strEval,0);
-          }else{
-            console.log("not exist");
-            redisClient.set(keyvalue,30);
-          };
-    });    
-}
 
 
 
