@@ -41,7 +41,7 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
   var stream = fs.createReadStream("./Data/" + par.linkfilename);
   var csvStream = csv({headers : true})
       .on("data", function(data){
-        //create time hash table
+        //create time, toll, dist, and free flow time hash table
         for (var i = 1; i <= par.timesteps; i++) { 
           timeHash.put(data['ID'] + ':' + i, data['T' + i]);
           tollHash.put(data['ID'] + ':' + i, data['TR' + i]);        

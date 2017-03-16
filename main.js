@@ -1,19 +1,34 @@
 //Starting node
 var redis = require('redis');
 var request = require('request');
-//var gapi = require('./google_api.js');
 var async = require('async');
 var fs = require('fs');
 var csv = require('fast-csv');
 
+// redis db list - 1.shortest path  2.volume by mode and time step 3.volume by time step
+//  6.shortest path task 7.move vehicle task
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
-
+var arrLink = [];
 var par = null;
 async.series([
     //read parameters
     function(callback){
         par = JSON.parse(fs.readFileSync("./Data/parameters.json"));
         callback();
+    },
+    //read link file
+    function(callback){
+        var stream = fs.createReadStream("./Data/" + par.linkfilename);
+        var csvStream = csv({headers : true})
+            .on("data", function(data){
+                for (var i = 1; i <= par.timesteps; i++) { 
+                    arrLink.push(data['ID'] + ':' + i); 
+                }
+            })
+            .on("end", function(){      
+                callback();
+            });     
+        stream.pipe(csvStream);
     },
     //create shortest path
     function(callback){
@@ -124,6 +139,32 @@ async.series([
         function(err,results){
             callback(); //move vehicles callback
         }); 
+    },
+    //Update time
+    function(callback){
+        multi = redisClient.multi();
+        multi.select(2);
+        async.eachSeries(arrLink,
+            function(item,callback){
+                var vol = 0;
+                async.eachSeries(par.modes, function(md,callback){
+                    multi.get(item + ":" + md, function(err,result){
+                        if(err){
+                            console.log(err);
+                        }else{
+                            vol = vol + parseFloat(result);
+                        }                                      
+                    });
+                    callback();
+                })
+                multi.exec(function(){
+                    if (vol > 0){console.log('update time ' + item + '=' + vol);}              
+                    callback();               
+             });           
+            },
+            function(){
+                callback();
+            });
     },
     //write csv file
     function(callback){
