@@ -4,12 +4,17 @@ var request = require('request');
 var async = require('async');
 var fs = require('fs');
 var csv = require('fast-csv');
+var hashtable = require('hashtable');
 
-// redis db list - 1.shortest path  2.volume by mode and time step 3.volume by time step
+// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time
 //  6.shortest path task 7.move vehicle task
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
 var arrLink = [];
 var par = null;
+var timeFFHash = new hashtable();
+var alphaHash = new hashtable();
+var betaHash = new hashtable();
+var capHash = new hashtable();
 async.series([
     //read parameters
     function(callback){
@@ -24,6 +29,10 @@ async.series([
                 for (var i = 1; i <= par.timesteps; i++) { 
                     arrLink.push(data['ID'] + ':' + i); 
                 }
+                timeFFHash.put(data['ID'],data['Dist']/data['Spd']*60);
+                alphaHash.put(data['ID'],data['Alpha']);
+                betaHash.put(data['ID'],data['Beta']);
+                capHash.put(data['ID'],data['Cap']);
             })
             .on("end", function(){      
                 callback();
@@ -142,23 +151,26 @@ async.series([
     },
     //Update time
     function(callback){
-        multi = redisClient.multi();
-        multi.select(2);
+        multi = redisClient.multi();        
         async.eachSeries(arrLink,
             function(item,callback){
                 var vol = 0;
+                multi.select(2);
                 async.eachSeries(par.modes, function(md,callback){
                     multi.get(item + ":" + md, function(err,result){
-                        if(err){
-                            console.log(err);
-                        }else{
+                        if(result != null){
                             vol = vol + parseFloat(result);
-                        }                                      
+                        }                                
                     });
                     callback();
                 })
-                multi.exec(function(){
-                    if (vol > 0){console.log('update time ' + item + '=' + vol);}              
+                multi.exec(function(){                     
+                    redisClient.select(3);
+                    var linkID = item.split(':')[0];
+                    var cgTime = timeFFHash.get(linkID)*alphaHash.get(linkID)
+                        *(vol*4/capHash.get(linkID))^betaHash.get(linkID);
+                    redisClient.set(item, cgTime);   
+                    if (vol > 0){console.log('update time ' + item + '=' + timeFFHash.get(linkID));}         
                     callback();               
              });           
             },
