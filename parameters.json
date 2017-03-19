@@ -4,6 +4,8 @@
     "linkfilename":"links.csv",
     "triptablefilename":"triptable.csv",
     "modes":["SOV","HOV","TRK"],
+    "maxiter":2,
+    "gap":0.01,
     "pathban":{
         "HOV":[],
         "TRK":[90]},
