@@ -37,11 +37,12 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
     var ftypeBan = [];
   }
 
-
   var stream = fs.createReadStream("./Data/" + par.linkfilename);
   var csvStream = csv({headers : true})
       .on("data", function(data){
         //create time, toll, dist, and free flow time hash table
+        multi = redisClient.multi();
+        multi.select(3);
         for (var i = 1; i <= par.timesteps; i++) { 
           timeHash.put(data['ID'] + ':' + i, data['T' + i]);
           tollHash.put(data['ID'] + ':' + i, data['TR' + i]);        
@@ -82,7 +83,7 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
 }
 
 //********find time dependent shortest path and write results to redis********
-var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
+var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
       //prepare network - remove links going out of other zones
       for (var i = 1; i <= zonenum; i++) {
         if(i != zone){
@@ -186,7 +187,7 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,callback) {
 }
 
 //********move vehicle and write results to redis********
-var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,cb) {
+var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
   var arrPath = path.split(',');
   var totTime = 0;
   var tpNew = tp;
@@ -344,140 +345,146 @@ router.use(bodyParser.json());
 router.get('/', function(req,res){
   var bdy =req.body;
   console.log('task ' + bdy.task);
-  //create shortest path
-  if (bdy.task == 'sp'){ 
-    var spZone = 0;
-    var timeStep = 0; 
-    var mode = '';
-    var pathType = 'zone';  
-    async.during(
-      //loop until to-do list is null
-      //test function 
-      function(cb){ 
-          console.log('***begin shortest path loop***');
-          spZone = 0;
-          timeStep = 0;
-          redisClient.select(6);       //task db 
-          async.series([
-            function(callback){
-                //get job
-                redisClient.lpop('to-do', function(err, result) {  
-                if(result != null){
-                  var ts = result.split('-'); //tp-zone-SOV-tl
-                  timeStep = ts[0];             
-                  spZone = ts[1]; 
-                  mode = ts[2];
-                  if (ts.length > 3){
-                    //decision point
-                    pathType = ts[3];   //tl,tf
-                  }else{
-                    pathType = 'zone';  //zone
-                  }
-                }
-                callback();     
-              });              
-            }],
-            function(err,results){
-              console.log('find sp for time step ' + timeStep + ', sp zone ' + spZone);
-              return cb(null,spZone>0);
-          });                           
-      },
-      //function 
-      function(callback){
-          async.series([
-          function(cb){
-            //read network
-            rdcsv(mode,pathType,spZone,function(err,result){
-                cb(null,result);
-            });          
+  async.series([
+    function(callback){
+      //read network
+      rdcsv(mode,pathType,spZone,function(err,result){
+        callback(null,result);
+      });          
+    },
+    function(callback){
+      //create shortest path
+      if (bdy.task == 'sp'){ 
+        var spZone = 0;
+        var timeStep = 0; 
+        var mode = '';
+        var pathType = 'zone';  
+        async.during(
+          //loop until to-do list is null
+          //test function 
+          function(cb){ 
+              console.log('***begin shortest path loop***');
+              spZone = 0;
+              timeStep = 0;
+              redisClient.select(6);       //task db 
+              async.series([
+                function(callback){
+                    //get job
+                    redisClient.lpop('to-do', function(err, result) {  
+                    if(result != null){
+                      var ts = result.split('-'); //tp-zone-SOV-tl
+                      timeStep = ts[0];             
+                      spZone = ts[1]; 
+                      mode = ts[2];
+                      if (ts.length > 3){
+                        //decision point
+                        pathType = ts[3];   //tl,tf
+                      }else{
+                        pathType = 'zone';  //zone
+                      }
+                    }
+                    callback();     
+                  });              
+                }],
+                function(err,results){
+                  console.log('find sp for time step ' + timeStep + ', sp zone ' + spZone);
+                  return cb(null,spZone>0);
+              });                           
           },
-          function(cb){
-            //create shortest path
-            sp(spZone,par.zonenum,timeStep,mode,pathType,function(err,result){
-                console.log('run sp ' + result);
-                cb(null,result);
-            });
-          }       
-          ],function(err,results){
-              callback(); 
-          }); 
-      },
-      //whilst callback
-      function(err,results){
-          console.log('end loop ' + results);
-          res.send('sp finished');
-      }    
-    );
-  }
-  //move vehicles
-  else if(bdy.task == 'mv'){ 
-    var zi = 0;  
-    var zj = 0;
-    var tp = 0;
-    var mode = 0;
-    var vol = 0;
-    var pathType = '';
-    console.log('***begin moving vehicles loop***');
-    async.during(
-      //loop until to-do list is null
-      //test function 
-      function(callback){               
-        async.series([
+          //function 
           function(callback){
-            zi = 0;
-            redisClient.select(7);       //task db 
-            redisClient.lpop('to-do', function(err, result) {
-              if(result != null){
-                var rs = result.split('-');
-                zi = rs[0];
-                zj = rs[1];
-                tp = rs[2];
-                mode = rs[3];
-                vol = rs[4];
-                pathType = rs[5];
-              }
-              callback();
-            });
-          }],
+              async.series([
+              
+              function(cb){
+                //create shortest path
+                sp(spZone,par.zonenum,timeStep,mode,pathType,body.iter,function(err,result){
+                    console.log('run sp ' + result);
+                    cb(null,result);
+                });
+              }       
+              ],function(err,results){
+                  callback(); 
+              }); 
+          },
+          //whilst callback
           function(err,results){
-              return callback(null,zi>0);
-          });
-      },
-      //function 
-      function(callback){
-        redisClient.select(1); //sp db
-        if (par.dcpnt.indexOf(parseInt(zi))!=-1){
-          //decision point
-          //get path
-          redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
-            //move vehicle
-            console.log('decision point ' + tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
-            mv(tp,zi,zj,pathType,mode,vol,result,function(err,result){
-                console.log('run mv ' + result);
-                callback();
-            });            
-          });
-
-        }else{
-          redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
-            //move vehicle
-            console.log(tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
-            mv(tp,zi,zj,pathType,mode,vol,result,function(err,result){
-                console.log('run mv ' + result);
-                callback();
-            });            
-          });
-        }       
-      },
-      //whilst callback
-      function(err,results){
-          console.log('end moving vehicle loop ' + results);
-          res.send('mv finished');
+              console.log('end loop ' + results);
+              res.send('sp finished');
+          }    
+        );
       }
-    );
-  }
-});
+      //move vehicles
+      else if(bdy.task == 'mv'){ 
+        var zi = 0;  
+        var zj = 0;
+        var tp = 0;
+        var mode = 0;
+        var vol = 0;
+        var pathType = '';
+        console.log('***begin moving vehicles loop***');
+        async.during(
+          //loop until to-do list is null
+          //test function 
+          function(callback){               
+            async.series([
+              function(callback){
+                zi = 0;
+                redisClient.select(7);       //task db 
+                redisClient.lpop('to-do', function(err, result) {
+                  if(result != null){
+                    var rs = result.split('-');
+                    zi = rs[0];
+                    zj = rs[1];
+                    tp = rs[2];
+                    mode = rs[3];
+                    vol = rs[4];
+                    pathType = rs[5];
+                  }
+                  callback();
+                });
+              }],
+              function(err,results){
+                  return callback(null,zi>0);
+              });
+          },
+          //function 
+          function(callback){
+            redisClient.select(1); //sp db
+            if (par.dcpnt.indexOf(parseInt(zi))!=-1){
+              //decision point
+              //get path
+              redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
+                //move vehicle
+                console.log('decision point ' + tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
+                mv(tp,zi,zj,pathType,mode,vol,result,function(err,result){
+                    console.log('run mv ' + result);
+                    callback();
+                });            
+              });
 
+            }else{
+              redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
+                //move vehicle
+                console.log(tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
+                mv(tp,zi,zj,pathType,mode,vol,result,body.iter,function(err,result){
+                    console.log('run mv ' + result);
+                    callback();
+                });            
+              });
+            }       
+          },
+          //whilst callback
+          function(err,results){
+              console.log('end moving vehicle loop ' + results);
+              res.send('mv finished');
+          }
+        );
+      }
+    }],
+    function(err,results){
+      callback();
+    });
+  });
 app.use('/', router);
 var server = app.listen(8080);
 

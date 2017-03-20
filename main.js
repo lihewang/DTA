@@ -103,7 +103,7 @@ async.series([
                             //make call
                             function(callback){
                                 request.get('http://localhost:8080',
-                                {json:{'task':'sp'}},
+                                {json:{'task':'sp','iter':iter}},
                                 function(error,response,body){
                                     console.log(body);
                                     callback();
@@ -157,7 +157,7 @@ async.series([
                             function(callback){
                                 console.log('call mv');
                                 request.get('http://localhost:8080',
-                                {json:{'task':'mv'}},
+                                {json:{'task':'mv','iter':iter}},
                                 function(error,response,body){
                                     console.log('end of move vehicles ' + body);
                                     callback();
@@ -167,13 +167,18 @@ async.series([
                             callback(); //move vehicles callback
                         }); 
                     },
+                    //Moving average volume
+                    function(callback){
+                        
+                        callback();
+                    },
                     //Update time
                     function(callback){
                         multi = redisClient.multi();        
                         async.eachSeries(arrLink,
                             function(item,callback){
                                 var vol = 0;
-                                multi.select(2);
+                                multi.select(3);
                                 async.eachSeries(par.modes, function(md,callback){
                                     multi.get(item + ":" + md, function(err,result){
                                         if(result != null){
