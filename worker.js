@@ -28,6 +28,10 @@ scriptManager.loadFromFile('task','./task.lua');
 //********csv reader********
 var rdcsv = function Readcsv(mode,pType,spZone,callback) {
   nodeHash.clear();
+  timeHash.clear();
+  distHash.clear();
+  tollHash.clear();
+  timeFFHash.clear();
   //get banning facility type
   if(mode == "HOV"){
     var ftypeBan = par.pathban.HOV;
@@ -345,14 +349,6 @@ router.use(bodyParser.json());
 router.get('/', function(req,res){
   var bdy =req.body;
   console.log('task ' + bdy.task);
-  async.series([
-    function(callback){
-      //read network
-      rdcsv(mode,pathType,spZone,function(err,result){
-        callback(null,result);
-      });          
-    },
-    function(callback){
       //create shortest path
       if (bdy.task == 'sp'){ 
         var spZone = 0;
@@ -385,6 +381,12 @@ router.get('/', function(req,res){
                     }
                     callback();     
                   });              
+                },
+                function(callback){
+                  //read network
+                  rdcsv(mode,pathType,spZone,function(err,result){
+                    callback(null,result);
+                  });          
                 }],
                 function(err,results){
                   console.log('find sp for time step ' + timeStep + ', sp zone ' + spZone);
@@ -397,7 +399,7 @@ router.get('/', function(req,res){
               
               function(cb){
                 //create shortest path
-                sp(spZone,par.zonenum,timeStep,mode,pathType,body.iter,function(err,result){
+                sp(spZone,par.zonenum,timeStep,mode,pathType,bdy.iter,function(err,result){
                     console.log('run sp ' + result);
                     cb(null,result);
                 });
@@ -448,48 +450,51 @@ router.get('/', function(req,res){
               });
           },
           //function 
-          function(callback){
-            redisClient.select(1); //sp db
-            if (par.dcpnt.indexOf(parseInt(zi))!=-1){
-              //decision point
-              //get path
-              redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
-                //move vehicle
-                console.log('decision point ' + tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
-                mv(tp,zi,zj,pathType,mode,vol,result,function(err,result){
-                    console.log('run mv ' + result);
-                    callback();
-                });            
-              });
+          function(callback){ 
+            async.series([
+              function(callback){
+                //read network
+                rdcsv(mode,pathType,zi,function(err,result){
+                  callback(null,result);
+                }); 
+              },
+              function(callback){
+                redisClient.select(1); //sp db
+                if (par.dcpnt.indexOf(parseInt(zi))!=-1){
+                  //decision point
+                  //get path
+                  redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
+                    //move vehicle
+                    console.log('decision point ' + tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
+                    mv(tp,zi,zj,pathType,mode,vol,result,function(err,result){
+                        console.log('run mv ' + result);
+                        callback();
+                    });            
+                  });
 
-            }else{
-              redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
-                //move vehicle
-                console.log(tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
-                mv(tp,zi,zj,pathType,mode,vol,result,body.iter,function(err,result){
-                    console.log('run mv ' + result);
-                    callback();
-                });            
+                }else{
+                  redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
+                    //move vehicle
+                    console.log(tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
+                    mv(tp,zi,zj,pathType,mode,vol,result,bdy.iter,function(err,result){
+                        console.log('run mv ' + result);
+                        callback();
+                    });            
+                  });
+                }       
+              }],
+              function(err,results){
+                return callback(null,results);
               });
-            }       
           },
           //whilst callback
           function(err,results){
               console.log('end moving vehicle loop ' + results);
               res.send('mv finished');
-          }
-        );
+          });
       }
-    }],
-    function(err,results){
-      callback();
-    });
-  });
+});
 app.use('/', router);
 var server = app.listen(8080);
 
 //process.exit(0); //End server 
-
-
-
-
