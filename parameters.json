@@ -52,5 +52,6 @@
         "scalestdlen":7.2,
         "scalealpha":1
     },
-    "distmaxfactor":2
+    "distmaxfactor":2,
+    "minpacketsize":0.001
 }
