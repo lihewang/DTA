@@ -6,7 +6,7 @@ var fs = require('fs');
 var csv = require('fast-csv');
 var hashtable = require('hashtable');
 
-// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time
+// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.vHT
 //  6.shortest path task 7.move vehicle task
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
 var arrLink = [];
@@ -37,8 +37,7 @@ async.series([
                 }
             },
             function(callback){
-                async.series([
-                    
+                async.series([                   
                     //read link file
                     function(callback){
                         var stream = fs.createReadStream("./Data/" + par.linkfilename);
@@ -174,11 +173,14 @@ async.series([
                     },
                     //Update time
                     function(callback){
-                        multi = redisClient.multi();        
+                        multi = redisClient.multi();
+                        var VHT_square = 0;
+                        var VHT_tot = 0;        
                         async.eachSeries(arrLink,
-                            function(item,callback){
+                            function(item,callback){    //loop links (96 time steps)
                                 var vol = 0;
-                                multi.select(3);
+                                multi.select(2);
+                                //total vol of all modes
                                 async.eachSeries(par.modes, function(md,callback){
                                     multi.get(item + ":" + md, function(err,result){
                                         if(result != null){
@@ -192,14 +194,24 @@ async.series([
                                     var linkID = item.split(':')[0];
                                     var cgTime = timeFFHash.get(linkID)*alphaHash.get(linkID)
                                         *(vol*4/capHash.get(linkID))^betaHash.get(linkID);
+                                    
                                     redisClient.set(item, cgTime);   
-                                    if (vol > 0){console.log('update time ' + item + '=' + timeFFHash.get(linkID));}         
+                                    if (vol > 0){console.log('update time ' + item + '=' + timeFFHash.get(linkID));} 
+                                    //VHT
+                                    if(iter>=2){
+                                        multi.select(4);
+                                        multi.get(linkID + ":" + item.split(':')[1], function(err, result){
+                                            VHT_square = VHT_square + (vol*cgTime - result)^2;
+                                            VHT_tot = VHT_tot + (vol*cgTime - result);
+                                        });             
+                                    }        
                                     callback();               
-                            });           
+                                });           
                             },
                             function(){
                                 callback();
                             });
+                        
                     },
                     //write csv file
                     function(callback){
