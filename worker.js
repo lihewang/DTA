@@ -191,7 +191,7 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
 }
 
 //********move vehicle and write results to redis********
-var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
+var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,callback) {
   var arrPath = path.split(',');
   var totTime = 0;
   var tpNew = tp;
@@ -203,7 +203,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
   async.during(
     //test function 
     function(cb){
-      console.log('loop start ' + j);
+      console.log('loop start ' + j + ', iter=' + iter + ',zi=' + zi + ',zj=' + zj + ',vol=' + vol);
       return cb(null,j <= arrPath.length-2 && !breakloop);
     },
     function(callback){
@@ -271,7 +271,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
                 newVol[0] = vol;
                 redisClient.get(tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tf",function(err,result){
                   console.log('move at decision point prob=' + probility + " " + tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tf:" + newVol[0]);
-                  mv(tp,arrPath[j],zj,'tf',mode,newVol[0],result,function(err,result){
+                  mv(tp,arrPath[j],zj,'tf',mode,newVol[0],result,iter,function(err,result){
                     console.log('move at decision point ' + result);                 
                   });
                 });
@@ -279,7 +279,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
                 newVol[0] = vol;
                 redisClient.get(tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tl",function(err,result){
                   console.log('move at decision point prob=' + probility + " " + tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tl:" + newVol[0]);
-                  mv(tp,arrPath[j],zj,'tl',mode,newVol[1],result,function(err,result){
+                  mv(tp,arrPath[j],zj,'tl',mode,newVol[1],result,iter,function(err,result){
                     console.log('move at decision point ' + result);                 
                   });
                 });
@@ -298,7 +298,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
                   function(callback){
                     redisClient.get(tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tf",function(err,result){
                       console.log('move tf at decision point prob=' + probility + " " + tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tf:" + newVol[0]);
-                      mv(tp,arrPath[j],zj,'tf',mode,newVol[0],result,function(err,result){
+                      mv(tp,arrPath[j],zj,'tf',mode,newVol[0],result,iter,function(err,result){
                         console.log('move at decision point ' + result);
                         callback();                 
                       });
@@ -307,7 +307,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
                   function(callback){
                     redisClient.get(tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tl",function(err,result){
                       console.log('move tl at decision point prob=' + probility + " " + tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tl:" + newVol[1]);
-                      mv(tp,arrPath[j],zj,'tl',mode,newVol[1],result,function(err,result){
+                      mv(tp,arrPath[j],zj,'tl',mode,newVol[1],result,iter,function(err,result){
                         console.log('move at decision point ' + result);  
                         callback();               
                       });
@@ -329,7 +329,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
             function(callback){ 
               var linkID = arrPath[j] + '-' + arrPath[j+1] + ':' + tp; 
               totTime = totTime + parseFloat(timeHash.get(linkID));
-              console.log(linkID + ' time=' + parseFloat(timeHash.get(linkID)));
+              console.log(linkID + ' time=' + parseFloat(timeHash.get(linkID)) + ',iter=' + iter);
               tpNew = parseInt(tp) + math.floor(totTime/15);
               keyValue = arrPath[j] + '-' + arrPath[j+1] + ':' + tpNew + ':' + mode;
               console.log(keyValue + ',tp=' + tp + ',totTime=' + totTime + ',tpNew=' + tpNew);
@@ -340,7 +340,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
               async.series([
                 function(callback){
                   scriptManager.run('task', [keyValue,vol], [], function(err, result) {
-                    console.log('lua ' + err + "," + result);
+                    console.log('lua err=' + err + "," + result);
                     callback();
                   });
                 }],
@@ -356,7 +356,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,cb) {
         }
   },
   function(err){
-    cb(null,keyValue); 
+    callback(null,keyValue); 
   }); 
 }
 

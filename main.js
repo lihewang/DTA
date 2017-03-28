@@ -16,7 +16,7 @@ var alphaHash = new hashtable();
 var betaHash = new hashtable();
 var capHash = new hashtable();
 var iter = 0;
-
+var gap = 1;
 async.series([
     //read parameters
     function(callback){
@@ -31,9 +31,7 @@ async.series([
                 if(iter == 1){
                     return callback(null, true);
                 }else{
-                    //calculate VHT
-
-                    return callback(null, iter <= par.maxiter )
+                    return callback(null, iter <= par.maxiter && gap > par.gap)
                 }
             },
             function(callback){
@@ -175,7 +173,7 @@ async.series([
                     function(callback){
                         multi = redisClient.multi();
                         var VHT_square = 0;
-                        var VHT_tot = 0;        
+                        var VHT_tot = 0;      
                         async.eachSeries(arrLink,
                             function(item,callback){    //loop links (96 time steps)
                                 var vol = 0;
@@ -194,21 +192,26 @@ async.series([
                                     var linkID = item.split(':')[0];
                                     var cgTime = timeFFHash.get(linkID)*alphaHash.get(linkID)
                                         *(vol*4/capHash.get(linkID))^betaHash.get(linkID);
-                                    
+                                    var vht = vol*cgTime;
                                     redisClient.set(item, cgTime);   
                                     if (vol > 0){console.log('update time ' + item + '=' + timeFFHash.get(linkID));} 
                                     //VHT
+                                    multi.select(4);
                                     if(iter>=2){
-                                        multi.select(4);
-                                        multi.get(linkID + ":" + item.split(':')[1], function(err, result){
-                                            VHT_square = VHT_square + (vol*cgTime - result)^2;
+                                        multi.get(linkID + ":" + item.split(':')[1], function(err, result){                                          
+                                            VHT_square = VHT_square + (vht - result)^2;
                                             VHT_tot = VHT_tot + (vol*cgTime - result);
+                                            multi.set(linkID + ":" + item.split(':')[1], vht);
                                         });             
-                                    }        
-                                    callback();               
+                                    }  
+                                    multi.exec(function(){
+                                        callback(null,'read trip table done');
+                                    });             
                                 });           
                             },
                             function(){
+                                //calculate gap
+                                gap = (VHT_square/arrLink.length)^0.5*(arrLink.length/VHT_tot);
                                 callback();
                             });
                         
