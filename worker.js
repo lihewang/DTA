@@ -203,8 +203,8 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,callback) {
   async.during(
     //test function 
     function(cb){
-      console.log('loop start ' + j + ', iter=' + iter + ',zi=' + zi + ',zj=' + zj + ',vol=' + vol);
-      return cb(null,j <= arrPath.length-2 && !breakloop);
+      console.log('loop start ' + j + ', iter=' + iter + ',zi=' + zi + ',zj=' + zj + ',vol=' + vol); 
+      return cb(null,j <= arrPath.length-2 && !breakloop);    
     },
     function(callback){
       if (par.dcpnt.indexOf(parseInt(arrPath[j]))!=-1 && j>0 && mode == "SOV"){
@@ -264,73 +264,51 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,callback) {
               })
             },
             function(probility, callback){
-              //recursive call mv
-              var newVol = [];
-              redisClient.select(1);  //sp db
+              //put to to-do list
+              var ptype = [];
+              var splitVol = [];
               if(probility == 0){
-                newVol[0] = vol;
-                redisClient.get(tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tf",function(err,result){
-                  console.log('move at decision point prob=' + probility + " " + tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tf:" + newVol[0]);
-                  mv(tp,arrPath[j],zj,'tf',mode,newVol[0],result,iter,function(err,result){
-                    console.log('move at decision point ' + result);                 
-                  });
-                });
+                ptype[0] = 'tf';
+                splitVol[0] = vol;
               }else if(probility == 1){
-                newVol[0] = vol;
-                redisClient.get(tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tl",function(err,result){
-                  console.log('move at decision point prob=' + probility + " " + tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tl:" + newVol[0]);
-                  mv(tp,arrPath[j],zj,'tl',mode,newVol[1],result,iter,function(err,result){
-                    console.log('move at decision point ' + result);                 
-                  });
-                });
+                ptype[0] = 'tl';
+                splitVol[0] = vol;
               }else{
-                newVol[0] = vol * (1 - probility);  //tf
-                newVol[1] = vol * probility;        //tl
-                //avoid small vol
-                if (newVol[0] < par.minpacketsize){
-                  newVol[0] = 0;
-                  newVol[1] = vol;
-                }else if (newVol[1] < par.minpacketsize){
-                  newVol[0] = vol;
-                  newVol[1] = 0;
-                }
-                async.series([
-                  function(callback){
-                    redisClient.get(tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tf",function(err,result){
-                      console.log('move tf at decision point prob=' + probility + " " + tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tf:" + newVol[0]);
-                      mv(tp,arrPath[j],zj,'tf',mode,newVol[0],result,iter,function(err,result){
-                        console.log('move at decision point ' + result);
-                        callback();                 
-                      });
-                    });
-                  },
-                  function(callback){
-                    redisClient.get(tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tl",function(err,result){
-                      console.log('move tl at decision point prob=' + probility + " " + tp + ":" + arrPath[j] + "-" + zj + ":" + mode + ":tl:" + newVol[1]);
-                      mv(tp,arrPath[j],zj,'tl',mode,newVol[1],result,iter,function(err,result){
-                        console.log('move at decision point ' + result);  
-                        callback();               
-                      });
-                    });
-                  }],
-                  function(err,results){
-                    callback(null,results);
+                ptype[0] = 'tf';
+                splitVol[0] = vol * (1 - probility);
+                ptype[1] = 'tl';
+                splitVol[1] = vol * probility;
+              }
+              var i = 0;
+              async.eachSeries(ptype,
+                function(ptp,callback){               
+                  multi.select(7);  //to-do db
+                  multi.rpush('to-do', arrPath[j]+'-'+zj+'-'+tpNew+'-'+mode+'-'+splitVol[i]+'-'+ptp);
+                  console.log('decision pnt added to-do ' + arrPath[j]+'-'+zj+'-'+tpNew+'-'+mode+'-'+splitVol[i]+'-'+ptp);
+                  multi.exec(function(err,results){
+                    i = i + 1;
+                    console.log('decision pnt added to-do ' + results);
+                    callback();
+                  });
+                },
+                function(err){
+                  callback();
                 });
-              } 
-              callback(null,'done');           
             }],
-            function(err,results){ 
-              breakloop = true;           
-              callback();                 
-            })       
+            function(err,results){
+              console.log('loop end ' + j);
+              breakloop = true;
+              callback(null,results);
+            });      
       }else{
         //not a decision point
         async.series([
             function(callback){ 
-              var linkID = arrPath[j] + '-' + arrPath[j+1] + ':' + tp; 
+              tpNew = parseInt(tp) + math.floor(totTime/15);
+              var linkID = arrPath[j] + '-' + arrPath[j+1] + ':' + tpNew; 
               totTime = totTime + parseFloat(timeHash.get(linkID));
               console.log(linkID + ' time=' + parseFloat(timeHash.get(linkID)) + ',iter=' + iter);
-              tpNew = parseInt(tp) + math.floor(totTime/15);
+              
               keyValue = arrPath[j] + '-' + arrPath[j+1] + ':' + tpNew + ':' + mode;
               console.log(keyValue + ',tp=' + tp + ',totTime=' + totTime + ',tpNew=' + tpNew);
               callback();
@@ -435,6 +413,7 @@ router.get('/', function(req,res){
       }
       //move vehicles
       else if(bdy.task == 'mv'){ 
+        multi = redisClient.multi();
         var zi = 0;  
         var zj = 0;
         var tp = 0;
@@ -449,8 +428,9 @@ router.get('/', function(req,res){
             async.series([
               function(callback){
                 zi = 0;
-                redisClient.select(7);       //task db 
-                redisClient.lpop('to-do', function(err, result) {
+                multi.select(7);       //task db 
+                multi.lpop('to-do', function(err, result) {
+                  console.log('Get to-do ' + result);
                   if(result != null){
                     var rs = result.split('-');
                     zi = rs[0];
@@ -459,12 +439,14 @@ router.get('/', function(req,res){
                     mode = rs[3];
                     vol = rs[4];
                     pathType = rs[5];
-                  }
-                  callback();
+                  }                 
                 });
+                multi.exec(function(err,result){
+                  callback();                  
+                })
               }],
-              function(err,results){
-                  return callback(null,zi>0);
+              function(err,results){               
+                return callback(null,zi>0);
               });
           },
           //function 
@@ -484,7 +466,7 @@ router.get('/', function(req,res){
                   redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
                     //move vehicle
                     console.log('decision point ' + tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
-                    mv(tp,zi,zj,pathType,mode,vol,result,function(err,result){
+                    mv(tp,zi,zj,pathType,mode,vol,result,bdy.iter,function(err,result){
                         console.log('run mv ' + result);
                         callback();
                     });            
@@ -493,7 +475,7 @@ router.get('/', function(req,res){
                 }else{
                   redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType,function(err,result){
                     //move vehicle
-                    console.log(tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
+                    console.log('zone node ' + tp + ":" + zi + ":" + zj  + ":" +  mode + ":" + pathType + " " + result);
                     mv(tp,zi,zj,pathType,mode,vol,result,bdy.iter,function(err,result){
                         console.log('run mv ' + result);
                         callback();

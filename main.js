@@ -136,8 +136,10 @@ async.series([
                                         multi = redisClient.multi();
                                         multi.select(7); 
                                         var csvStream = csv({headers : true})
-                                            .on("data", function(data){                              
-                                                multi.rpush('to-do', data['I']+'-'+data['J']+'-'+data['TP']+'-'+data['Mode']+'-'+data['Vol']+'-zone');
+                                            .on("data", function(data){ 
+                                                if(parseInt(data['I'])>0){                            
+                                                    multi.rpush('to-do', data['I']+'-'+data['J']+'-'+data['TP']+'-'+data['Mode']+'-'+data['Vol']+'-zone');
+                                                }
                                             })
                                             .on("end", function(){  
                                                 multi.exec(function(){
