@@ -496,5 +496,3 @@ router.get('/', function(req,res){
 });
 app.use('/', router);
 var server = app.listen(8080);
-
-//process.exit(0); //End server 

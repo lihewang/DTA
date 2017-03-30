@@ -5,6 +5,7 @@ var async = require('async');
 var fs = require('fs');
 var csv = require('fast-csv');
 var hashtable = require('hashtable');
+var math = require('mathjs');
 
 // redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.vHT
 //  6.shortest path task 7.move vehicle task
@@ -38,6 +39,7 @@ async.series([
                 async.series([                   
                     //read link file
                     function(callback){
+                        arrLink = [];
                         var stream = fs.createReadStream("./Data/" + par.linkfilename);
                         var csvStream = csv({headers : true})
                             .on("data", function(data){
@@ -176,6 +178,7 @@ async.series([
                         multi = redisClient.multi();
                         var VHT_square = 0;
                         var VHT_tot = 0;      
+                        console.log('update time start');
                         async.eachSeries(arrLink,
                             function(item,callback){    //loop links (96 time steps)
                                 var vol = 0;
@@ -189,23 +192,22 @@ async.series([
                                     });
                                     callback();
                                 })
-                                multi.exec(function(){                     
-                                    redisClient.select(3);
+                                multi.exec(function(){                                             
                                     var linkID = item.split(':')[0];
-                                    var cgTime = timeFFHash.get(linkID)*alphaHash.get(linkID)
-                                        *(vol*4/capHash.get(linkID))^betaHash.get(linkID);
+                                    //BPR function
+                                    var cgTime = timeFFHash.get(linkID)*(1+alphaHash.get(linkID)*math.pow(vol*4/capHash.get(linkID),betaHash.get(linkID)));
                                     var vht = vol*cgTime;
-                                    redisClient.set(item, cgTime);   
-                                    if (vol > 0){console.log('update time ' + item + '=' + timeFFHash.get(linkID));} 
+                                    multi.select(3);
+                                    multi.set(item, cgTime);   
                                     //VHT
                                     multi.select(4);
                                     if(iter>=2){
                                         multi.get(linkID + ":" + item.split(':')[1], function(err, result){                                          
                                             VHT_square = VHT_square + (vht - result)^2;
-                                            VHT_tot = VHT_tot + (vol*cgTime - result);
-                                            multi.set(linkID + ":" + item.split(':')[1], vht);
+                                            VHT_tot = VHT_tot + (vht - result);                                          
                                         });             
                                     }  
+                                    multi.set(linkID + ":" + item.split(':')[1], vht);
                                     multi.exec(function(){
                                         callback(null,'read trip table done');
                                     });             
@@ -213,7 +215,14 @@ async.series([
                             },
                             function(){
                                 //calculate gap
-                                gap = (VHT_square/arrLink.length)^0.5*(arrLink.length/VHT_tot);
+                                if(iter>=2){
+                                    if(VHT_tot != 0) {
+                                        gap = math.pow(VHT_square/arrLink.length,0.5)*(arrLink.length/VHT_tot);
+                                    }else{
+                                        gap = 0;
+                                    }
+                                }
+                                console.log('gap='+gap+',VHT_square='+VHT_square+',VHT_tot='+VHT_tot+',linknum='+arrLink.length);
                                 callback();
                             });
                         
@@ -256,5 +265,7 @@ async.series([
             function(err,results){
                 callback();
             });
-        }]
-    );
+        }],
+    function(){
+        process.exit(0); //End server
+    });
