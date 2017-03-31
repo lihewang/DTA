@@ -16,6 +16,7 @@ var distHash = new hashtable();     //link distance
 var nodeHash = new hashtable();     //network topology
 var tollHash = new hashtable();     //toll on the link
 var timeFFHash = new hashtable();   //free flow time on link
+var arrLink = [];
 var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
 var jsonParser = bodyParser.json();
 //var eventEmitter = new events.EventEmitter();
@@ -40,16 +41,15 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
   }else{
     var ftypeBan = [];
   }
-
+  arrLink = [];
   var stream = fs.createReadStream("./Data/" + par.linkfilename);
   var csvStream = csv({headers : true})
       .on("data", function(data){
         //create time, toll, dist, and free flow time hash table
-        multi = redisClient.multi();
-        multi.select(3);
         for (var i = 1; i <= par.timesteps; i++) { 
           timeHash.put(data['ID'] + ':' + i, data['T' + i]);
-          tollHash.put(data['ID'] + ':' + i, data['TR' + i]);        
+          tollHash.put(data['ID'] + ':' + i, data['TR' + i]);  
+          arrLink.push(data['ID'] + ':' + i);       
         }
         distHash.put(data['ID'], data['Dist']);
         timeFFHash.put(data['ID'],data['Dist']/data['Spd']*60);
@@ -93,6 +93,21 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
         if(i != zone){
           nodeHash.remove(i);
         }
+      }
+      //read in congested time
+      if(iter>=2){
+        timeHash.clear;
+        multi = redisClient.multi();
+        multi.select(3);
+        async.eachSeries(arrLink,
+          function(item,callback){
+            multi.get(arrLink,function(err,result){
+              timeHash.put(arrLink, result);
+              callback();
+            })
+        });
+        multi.exec(function(){
+        });      
       }
       //apply turn penalty
 

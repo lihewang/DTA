@@ -178,7 +178,6 @@ async.series([
                         multi = redisClient.multi();
                         var VHT_square = 0;
                         var VHT_tot = 0;      
-                        console.log('update time start');
                         async.eachSeries(arrLink,
                             function(item,callback){    //loop links (96 time steps)
                                 var vol = 0;
