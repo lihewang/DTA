@@ -196,6 +196,9 @@ async.series([
                                     //BPR function
                                     var cgTime = timeFFHash.get(linkID)*(1+alphaHash.get(linkID)*math.pow(vol*4/capHash.get(linkID),betaHash.get(linkID)));
                                     var vht = vol*cgTime;
+                                    if(vht>0){
+                                        console.log('item='+item+',VHT='+vht+',vol='+vol+',cgtime='+cgTime);
+                                    }
                                     multi.select(3);
                                     multi.set(item, cgTime);   
                                     //VHT
@@ -221,40 +224,10 @@ async.series([
                                         gap = 0;
                                     }
                                 }
-                                console.log('gap='+gap+',VHT_square='+VHT_square+',VHT_tot='+VHT_tot+',linknum='+arrLink.length);
+                                console.log('gap='+gap+',VHT_square='+VHT_square+',VHT_tot='+VHT_tot+',linknum='+arrLink.length);                               
                                 callback();
                             });
                         
-                    },
-                    //write csv file
-                    function(callback){
-                        var rcd = [];
-                        async.series([
-                            function(callback){
-                                rcd.push(["linkid","tp","mode","vol"]);
-                                redisClient.select(2);
-                                redisClient.keys('*',function(err,results){
-                                    multi = redisClient.multi();
-                                    results.forEach(function(key){
-                                        var arrKey = key.split(":");
-                                        multi.get(key,function(err,result){                          
-                                            rcd.push([arrKey[0],arrKey[1],arrKey[2],result])
-                                        })                        
-                                    })
-                                    multi.exec(function(){
-                                        callback();
-                                    });
-                                });
-                            },
-                            function(callback){
-                                var ws = fs.createWriteStream("vol.csv");
-                                csv.write(rcd, {headers: true})
-                                .pipe(ws);
-                                callback();
-                            }],
-                            function(err,results){
-                                callback(); 
-                            });          
                     }],
                     function(err,results){
                         callback();
@@ -262,7 +235,36 @@ async.series([
             },
             //whilst callback
             function(err,results){
-                callback();
+                    //write csv file                  
+                    var rcd = [];
+                    async.series([
+                        function(callback){
+                            rcd.push(["linkid","tp","mode","vol"]);
+                            redisClient.select(2);
+                            redisClient.keys('*',function(err,results){
+                                multi = redisClient.multi();
+                                results.forEach(function(key){
+                                    var arrKey = key.split(":");                                      
+                                    multi.get(key,function(err,result){                          
+                                        rcd.push([arrKey[0],arrKey[1],arrKey[2],result]);                                      
+                                    })                        
+                                })
+                                multi.exec(function(){                                  
+                                    callback();
+                                });
+                            });                           
+                        },
+                        function(callback){ 
+                            //console.log(rcd);           
+                            csv.writeToStream(fs.createWriteStream("vol.csv"), rcd, {headers: true})
+                                .on("finish",function(){
+                                    console.log('end');
+                                    callback();
+                                });                                                   
+                        }],
+                        function(err,results){                            
+                            callback(); 
+                        });          
             });
         }],
     function(){
