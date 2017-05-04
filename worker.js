@@ -41,7 +41,7 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
   }else{
     var ftypeBan = [];
   }
-  arrLink = [];
+  arrLink.length = 0;
   var stream = fs.createReadStream("./Data/" + par.linkfilename);
   var csvStream = csv({headers : true})
       .on("data", function(data){
@@ -101,12 +101,13 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
         multi.select(3);
         async.eachSeries(arrLink,
           function(item,callback){
-            multi.get(arrLink,function(err,result){
-              timeHash.put(arrLink, result);
+            multi.get(item,function(err,result){
+              timeHash.put(item, result);           
               callback();
             })
         });
         multi.exec(function(){
+          console.log('arrLink size=' + arrLink.length + ' zone=' + zone + ' tp=' + tp + ' cgTime=' + timeHash.get('1-7:1'));
         });      
       }
       //apply turn penalty
@@ -272,8 +273,8 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,callback) {
                   
                   probility = 1 / (1 + math.exp(utility));
 
-                  //console.log('probility calculation: tollconst=' + par.choicemodel.tollconst[0] + ',distTl=' + distTl
-                  //+ ',timeTl=' + timeTl);
+                  console.log('probility calculation: tollconst=' + par.choicemodel.tollconst[0] + ',distTl=' + distTl
+                  + ',timeTl=' + timeTl + ',timeTf=' + timeTf+ ' probility=' + probility);
                 }
                 callback(null,probility);
               })
