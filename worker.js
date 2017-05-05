@@ -88,31 +88,40 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
 
 //********find time dependent shortest path and write results to redis********
 var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
+  async.series([
+    function(callback){
       //prepare network - remove links going out of other zones
       for (var i = 1; i <= zonenum; i++) {
         if(i != zone){
           nodeHash.remove(i);
         }
       }
+      callback();
+    },
+    function(callback){
       //read in congested time
       if(iter>=2){
-        timeHash.clear;
+        timeHash.clear();
         multi = redisClient.multi();
         multi.select(3);
-        async.eachSeries(arrLink,
-          function(item,callback){
-            multi.get(item,function(err,result){
-              timeHash.put(item, result);           
-              callback();
-            })
+        arrLink.forEach(function(link){
+            multi.get(link,function(err,result){
+              timeHash.put(link, result);           
+            });
         });
         multi.exec(function(){
-          console.log('arrLink size=' + arrLink.length + ' zone=' + zone + ' tp=' + tp + ' cgTime=' + timeHash.get('1-7:1'));
+          //console.log('arrLink size=' + arrLink.length + ' zone=' + zone + ' tp=' + tp + 
+          //' 7-4cgTime=' + timeHash.get('7-4:1') + ' 7-5cgTime=' + timeHash.get('7-5:1'));   
+          callback();      
         });      
+      }else{
+        callback();
       }
+    }],
       //apply turn penalty
 
-
+    function(err,result){
+      
       //Priority queue for frontier nodes
       var pqNodes = new pq(function(a, b) {
           return b.t - a.t;
@@ -203,7 +212,8 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
       } 
       multi.exec(function(err,results){      
         callback(null,zone);
-      });         
+      }); 
+    });        
 }
 
 //********move vehicle and write results to redis********

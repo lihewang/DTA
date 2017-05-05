@@ -200,18 +200,21 @@ async.series([
                                         console.log('item='+item+',VHT='+vht+',vol='+vol+',cgtime='+cgTime);
                                     }
                                     multi.select(3);
-                                    multi.set(item, cgTime);   
+                                    multi.set(item, cgTime);
+                                    multi.exec(function(){
+                                    });   
                                     //VHT
+                                    multi = redisClient.multi();
                                     multi.select(4);
                                     if(iter>=2){
                                         multi.get(linkID + ":" + item.split(':')[1], function(err, result){                                          
-                                            VHT_square = VHT_square + (vht - result)^2;
-                                            VHT_tot = VHT_tot + (vht - result);                                          
+                                            VHT_square = VHT_square + math.pow((vht - result)/1000,2);
+                                            VHT_tot = VHT_tot + result/1000;                                          
                                         });             
                                     }  
                                     multi.set(linkID + ":" + item.split(':')[1], vht);
                                     multi.exec(function(){
-                                        callback(null,'read trip table done');
+                                        callback(null,'VHT done');
                                     });             
                                 });           
                             },
@@ -219,7 +222,7 @@ async.series([
                                 //calculate gap
                                 if(iter>=2){
                                     if(VHT_tot != 0) {
-                                        gap = math.pow(VHT_square/arrLink.length,0.5)*(arrLink.length/VHT_tot);
+                                        gap = math.pow(VHT_square/arrLink.length,0.5)*(arrLink.length/(VHT_tot));
                                     }else{
                                         gap = 0;
                                     }
