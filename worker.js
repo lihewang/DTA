@@ -48,7 +48,7 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
         //create time, toll, dist, and free flow time hash table
         for (var i = 1; i <= par.timesteps; i++) { 
           timeHash.put(data['ID'] + ':' + i, data['T' + i]);
-          tollHash.put(data['ID'] + ':' + i, data['TR' + i]);  
+          tollHash.put(data['ID'] + ':' + i, data['TR' + i]*data['Dist' + i]);  
           arrLink.push(data['ID'] + ':' + i);       
         }
         distHash.put(data['ID'], data['Dist']);
@@ -199,7 +199,11 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
             var skimFFtime = 0;
             for (var j = 0; j <= dpPath.length-2; j++) {
                 skimDist = skimDist + parseFloat(distHash.get(dpPath[j] + '-' + dpPath[j+1]));
-                skimToll = skimToll + parseFloat(tollHash.get(dpPath[j] + '-' + dpPath[j+1]));
+                var tempTl = parseFloat(tollHash.get(dpPath[j] + '-' + dpPath[j+1]));
+                if (typeof tempTl == 'undefined' || isNaN(parseFloat(tempTl))){
+                  tempTl = 0;
+                }
+                skimToll = skimToll + tempTl;
                 skimFFtime = skimFFtime + parseFloat(timeFFHash.get(dpPath[j] + '-' + dpPath[j+1]));
             }
             multi.set(tp + ":" + zonePair + ":" + mode + ":" + pathType + ":time", visitedNodes.get(i));
@@ -207,7 +211,7 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
             multi.set(tp + ":" + zonePair + ":" + mode + ":" + pathType + ":toll", skimToll);
             multi.set(tp + ":" + zonePair + ":" + mode + ":" + pathType + ":fftime", skimFFtime);
           }
-          console.log(tp + ":" + zonePair + ":" + pathType + ', ' + path); 
+          console.log(tp + ":" + zonePair + ":" + pathType + ', ' + path + ' Toll=' + skimToll); 
         }
       } 
       multi.exec(function(err,results){      
@@ -261,7 +265,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,callback) {
                 distTf = result;
               });
               multi.get(tp + ":" + zonePair  + ":" + mode + ":tl:toll",function(err,result){
-                Toll = result;
+                  Toll = result;
               });
               multi.get(tp + ":" + zonePair + ":" + mode + ":tl:fftime",function(err,result){
                 timeFFTl = result;
@@ -284,7 +288,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,callback) {
                   probility = 1 / (1 + math.exp(utility));
 
                   console.log('probility calculation: tollconst=' + par.choicemodel.tollconst[0] + ',distTl=' + distTl
-                  + ',timeTl=' + timeTl + ',timeTf=' + timeTf+ ' probility=' + probility);
+                  + ',distTf=' + distTf + ',timeTl=' + timeTl + ',timeTf=' + timeTf + ',Toll=' + Toll + ' probility=' + probility);
                 }
                 callback(null,probility);
               })
