@@ -48,7 +48,7 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
         //create time, toll, dist, and free flow time hash table
         for (var i = 1; i <= par.timesteps; i++) { 
           timeHash.put(data['ID'] + ':' + i, data['T' + i]);
-          tollHash.put(data['ID'] + ':' + i, data['TR' + i]*data['Dist' + i]);  
+          tollHash.put(data['ID'] + ':' + i, parseFloat(data['TR' + i])*parseFloat(data['Dist'])); 
           arrLink.push(data['ID'] + ':' + i);       
         }
         distHash.put(data['ID'], data['Dist']);
@@ -72,10 +72,10 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
                 var value = nodeHash.get(abnode[0]);
                 value.push(abnode[1]);
                 nodeHash.put(abnode[0],value);
-                console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "], pathType:" + pType);
+                //console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "], pathType:" + pType);
               }else{
                 nodeHash.put(abnode[0],[abnode[1]]);
-                console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "], pathType:" + pType);
+                //console.log(abnode[0] + ",[" + nodeHash.get(abnode[0]) + "], pathType:" + pType);
               }
             }
          }           
@@ -111,7 +111,7 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
         });
         multi.exec(function(){
           //console.log('arrLink size=' + arrLink.length + ' zone=' + zone + ' tp=' + tp + 
-          //' 7-4cgTime=' + timeHash.get('7-4:1') + ' 7-5cgTime=' + timeHash.get('7-5:1'));   
+           //' 7-4cgTime=' + timeHash.get('7-4:1') + ' 7-5cgTime=' + timeHash.get('7-5:1'));   
           callback();      
         });      
       }else{
@@ -199,8 +199,8 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
             var skimFFtime = 0;
             for (var j = 0; j <= dpPath.length-2; j++) {
                 skimDist = skimDist + parseFloat(distHash.get(dpPath[j] + '-' + dpPath[j+1]));
-                var tempTl = parseFloat(tollHash.get(dpPath[j] + '-' + dpPath[j+1]));
-                if (typeof tempTl == 'undefined' || isNaN(parseFloat(tempTl))){
+                var tempTl = parseFloat(tollHash.get(dpPath[j] + '-' + dpPath[j+1] + ':' + tp));
+                if (typeof tempTl == 'undefined' || isNaN(tempTl)){
                   tempTl = 0;
                 }
                 skimToll = skimToll + tempTl;
@@ -211,7 +211,7 @@ var sp = function ShortestPath(zone,zonenum,tp,mode,pathType,iter,callback) {
             multi.set(tp + ":" + zonePair + ":" + mode + ":" + pathType + ":toll", skimToll);
             multi.set(tp + ":" + zonePair + ":" + mode + ":" + pathType + ":fftime", skimFFtime);
           }
-          console.log(tp + ":" + zonePair + ":" + pathType + ', ' + path + ' Toll=' + skimToll); 
+          console.log('Iter=' + iter + ' ' + tp + ":" + zonePair + ":" + pathType + ', ' + path + ' Toll=' + skimToll); 
         }
       } 
       multi.exec(function(err,results){      
@@ -348,7 +348,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,callback) {
               async.series([
                 function(callback){
                   scriptManager.run('task', [keyValue,vol], [], function(err, result) {
-                    console.log('lua err=' + err + "," + result);
+                    //console.log('lua err=' + err + "," + result);
                     callback();
                   });
                 }],
