@@ -6,6 +6,7 @@ var fs = require('fs');
 var csv = require('fast-csv');
 var hashtable = require('hashtable');
 var math = require('mathjs');
+var Scripto = require('redis-scripto');
 
 // redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.vHT
 //  6.shortest path task 7.move vehicle task
@@ -18,11 +19,22 @@ var betaHash = new hashtable();
 var capHash = new hashtable();
 var iter = 0;
 var gap = 1;
+
+//load redis lua script
+var scriptManager = new Scripto(redisClient);
+scriptManager.loadFromFile('msa','./msa.lua');
+
 async.series([
     //read parameters
     function(callback){
         par = JSON.parse(fs.readFileSync("./Data/parameters.json"));
-        callback();
+        //clear link db
+        multi = redisClient.multi();
+        multi.select(2);  
+        multi.flushdb(); 
+        multi.exec(function(){
+            callback();
+        });
     },
     function(callback){
         async.during(
@@ -122,9 +134,6 @@ async.series([
                                 async.series([
                                     function(callback){
                                         multi = redisClient.multi();
-                                        //clear link db
-                                        multi.select(2);  
-                                        multi.flushdb(); 
                                         //clear task db
                                         multi.select(7);  
                                         multi.flushdb();                                         
@@ -180,15 +189,24 @@ async.series([
                         var VHT_tot = 0;      
                         async.eachSeries(arrLink,
                             function(item,callback){    //loop links (96 time steps)
-                                var vol = 0;
+                                var vol = 0;    //vol of all modes        
                                 multi.select(2);
                                 //total vol of all modes
                                 async.eachSeries(par.modes, function(md,callback){
-                                    multi.get(item + ":" + md, function(err,result){
+                                    if (iter>=2){   //MSA Volume
+                                        var lastIter = iter - 1;
+                                        var key1 = item + ":" + md + ":" + iter;
+                                        var key2 = item + ":" + md + ":" + lastIter;
+                                        scriptManager.run('msa', [key1,key2,iter], [], function(err, result) {
+                                            console.log('lua err=' + err + "," + result);
+                                        });
+                                    }
+                                    multi.get(item + ":" + md + ":" + iter, function(err,result){
                                         if(result != null){
-                                            vol = vol + parseFloat(result);
+                                            vol = vol + result;
                                         }                                
                                     });
+                                    
                                     callback();
                                 })
                                 multi.exec(function(){                                             
@@ -197,7 +215,7 @@ async.series([
                                     var cgTime = timeFFHash.get(linkID)*(1+alphaHash.get(linkID)*math.pow(vol*4/capHash.get(linkID),betaHash.get(linkID)));
                                     var vht = vol*cgTime;
                                     if(vht>0){
-                                        console.log('item='+item+',VHT='+vht+',vol='+vol+',cgtime='+cgTime);
+                                        console.log('iter=' + iter + ',item='+item+',VHT='+vht+',vol='+vol+',cgtime='+cgTime);
                                     }
                                     multi.select(3);
                                     multi.set(item, cgTime);

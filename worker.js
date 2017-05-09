@@ -339,7 +339,7 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,callback) {
               totTime = totTime + parseFloat(timeHash.get(linkID));
               console.log(linkID + ' time=' + parseFloat(timeHash.get(linkID)) + ',iter=' + iter);
               
-              keyValue = arrPath[j] + '-' + arrPath[j+1] + ':' + tpNew + ':' + mode;
+              keyValue = arrPath[j] + '-' + arrPath[j+1] + ':' + tpNew + ':' + mode + ':' + iter;
               console.log(keyValue + ',tp=' + tp + ',totTime=' + totTime + ',tpNew=' + tpNew);
               callback();
             },
