@@ -198,7 +198,7 @@ async.series([
                                         var key1 = item + ":" + md + ":" + iter;
                                         var key2 = item + ":" + md + ":" + lastIter;
                                         scriptManager.run('msa', [key1,key2,iter], [], function(err, result) {
-                                            console.log('lua err=' + err + "," + result);
+                                            //console.log('lua err=' + err + "," + result);
                                         });
                                     }
                                     multi.get(item + ":" + md + ":" + iter, function(err,result){
@@ -260,14 +260,14 @@ async.series([
                     var rcd = [];
                     async.series([
                         function(callback){
-                            rcd.push(["linkid","tp","mode","vol"]);
+                            rcd.push(["iter","linkid","tp","mode","vol"]);
                             redisClient.select(2);
                             redisClient.keys('*',function(err,results){
                                 multi = redisClient.multi();
                                 results.forEach(function(key){
                                     var arrKey = key.split(":");                                      
                                     multi.get(key,function(err,result){                          
-                                        rcd.push([arrKey[0],arrKey[1],arrKey[2],result]);                                      
+                                        rcd.push([arrKey[3],arrKey[0],arrKey[1],arrKey[2],result]);                                      
                                     })                        
                                 })
                                 multi.exec(function(){                                  

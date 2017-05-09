@@ -279,16 +279,20 @@ var mv = function MoveVehicle(tp,zi,zj,pthTp,mode,vol,path,iter,callback) {
                 }else if(distTf > distTl * parseFloat(par.distmaxfactor)){
                   probility = 1;
                 }else{
-                  var utility = -1 * par.choicemodel.tollconst[tp-1] - (par.choicemodel.scalestdlen/distTl)  
-                  ^ par.choicemodel.scalealpha * (par.choicemodel.timecoeff * (timeTl - timeTf)) 
+                  var utility = -1*par.choicemodel.tollconst[tp-1] - math.pow((par.choicemodel.scalestdlen/distTl)  
+                  ,par.choicemodel.scalealpha) * (par.choicemodel.timecoeff * (timeTl - timeTf)) 
                   + par.choicemodel.tollcoeff * Toll + par.choicemodel.timecoeff * par.choicemodel.reliacoeffratio
-                  * par.choicemodel.reliacoefftime * ((timeFFTf - timeTf) * distTf ^ (-1 * par.choicemodel.reliacoeffdist)
-                  - (timeFFTl -timeTl) * distTl ^ (-1 * par.choicemodel.reliacoeffdist));
+                  * par.choicemodel.reliacoefftime * ((timeFFTf - timeTf) * math.pow(distTf, (-1 * par.choicemodel.reliacoeffdist))
+                  - (timeFFTl -timeTl) * math.pow(distTl, (-1 * par.choicemodel.reliacoeffdist)));
                   
                   probility = 1 / (1 + math.exp(utility));
 
-                  console.log('probility calculation: tollconst=' + par.choicemodel.tollconst[0] + ',distTl=' + distTl
-                  + ',distTf=' + distTf + ',timeTl=' + timeTl + ',timeTf=' + timeTf + ',Toll=' + Toll + ' probility=' + probility);
+                  console.log('probility calculation: tollconst=' + par.choicemodel.tollconst[tp-1] + ',scalesdlen=' + par.choicemodel.scalestdlen 
+                  + ',scalealpha=' + par.choicemodel.scalealpha + ',timecoeff=' + par.choicemodel.timecoeff 
+                  + ',tollcoeff=' + par.choicemodel.tollcoeff + ',reliacoeffratio=' + par.choicemodel.reliacoeffratio 
+                  + ',reliacoefftime=' + par.choicemodel.reliacoefftime + ',reliacoeffdist=' + par.choicemodel.reliacoeffdist); 
+                  console.log('distTl=' + distTl + ',distTf=' + distTf + ',timeTl=' + timeTl + ',timeTf=' + timeTf 
+                  + ',timeFFTl=' + timeFFTl + ',timeFFTf=' + timeFFTf + ',Toll=' + Toll + ',utility=' + utility + ',probility=' + probility);
                 }
                 callback(null,probility);
               })
