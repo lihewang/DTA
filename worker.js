@@ -17,14 +17,25 @@ var nodeHash = new hashtable();     //network topology
 var tollHash = new hashtable();     //toll on the link
 var timeFFHash = new hashtable();   //free flow time on link
 var arrLink = [];
-var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
+ 
+/*//local test
+var redisIP = "redis://127.0.0.1:6379";    
+var paraFile = "./Data/parameters.json";
+var luaScript = './task.lua';
+*/
+//deploy to cluster
+var redisIP = process.env.REDIS_PORT
+var paraFile = "/app/parameters.json";
+var luaScript = '/app/task.lua';
+
+var redisClient = redis.createClient({url:redisIP}),multi;
 var jsonParser = bodyParser.json();
 //var eventEmitter = new events.EventEmitter();
-var par = JSON.parse(fs.readFileSync("./Data/parameters.json"));
+var par = JSON.parse(fs.readFileSync(paraFile));
 
 //load redis lua script
 var scriptManager = new Scripto(redisClient);
-scriptManager.loadFromFile('task','./task.lua');
+scriptManager.loadFromFile('task',luaScript);
 
 //********csv reader********
 var rdcsv = function Readcsv(mode,pType,spZone,callback) {

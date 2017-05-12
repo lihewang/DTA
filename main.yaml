@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: main
+  labels:
+    app: main
+spec:
+  type: NodePort
+  ports:
+  - port: 8080
+    name: main
+    targetPort: 8080
+  selector:
+    app: main
+apiVersion: extensions/v1beta1
+kind: Deployment
+metadata:
+  name: main
+spec:
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: main
+        role: master
+        tier: backend
+    spec:
+      containers:
+      - name: main
+        image: gcr.io/bright-primacy-140715/main:1.0
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+        ports:
+        - containerPort: 8080

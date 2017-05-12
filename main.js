@@ -10,7 +10,24 @@ var Scripto = require('redis-scripto');
 
 // redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.vHT
 //  6.shortest path task 7.move vehicle task
-var redisClient = redis.createClient({url:"redis://127.0.0.1:6379"}),multi;
+
+/*//local test
+var redisIP = "redis://127.0.0.1:6379";    
+var paraFile = "./Data/parameters.json";
+var luaScript = './msa.lua';
+var linkFile = "./Data/" + par.linkfilename;
+var triptableFile = "./Data/" + par.triptablefilename;
+var workerIP = 'http://localhost:8080';
+*/
+//deploy to cluster
+var redisIP = process.env.REDIS_PORT;
+var paraFile = "/app/parameters.json";
+var luaScript = '/app/msa.lua';
+var linkFile = "/app/" + par.linkfilename;
+var triptableFile = "/app/" + par.triptablefilename;
+var workerIP = process.env.WORKER_PORT;
+
+var redisClient = redis.createClient({url:redisIP}),multi;
 var arrLink = [];
 var par = null;
 var timeFFHash = new hashtable();
@@ -22,12 +39,12 @@ var gap = 1;
 
 //load redis lua script
 var scriptManager = new Scripto(redisClient);
-scriptManager.loadFromFile('msa','./msa.lua');
+scriptManager.loadFromFile('msa',luaScript);
 
 async.series([
     //read parameters
     function(callback){
-        par = JSON.parse(fs.readFileSync("./Data/parameters.json"));
+        par = JSON.parse(fs.readFileSync(paraFile));
         //clear link db
         multi = redisClient.multi();
         multi.select(2);  
@@ -52,7 +69,7 @@ async.series([
                     //read link file
                     function(callback){
                         arrLink = [];
-                        var stream = fs.createReadStream("./Data/" + par.linkfilename);
+                        var stream = fs.createReadStream(linkFile);
                         var csvStream = csv({headers : true})
                             .on("data", function(data){
                                 for (var i = 1; i <= par.timesteps; i++) { 
@@ -113,7 +130,7 @@ async.series([
                             },
                             //make call
                             function(callback){
-                                request.get('http://localhost:8080',
+                                request.get(workerIP,
                                 {json:{'task':'sp','iter':iter}},
                                 function(error,response,body){
                                     console.log(body);
@@ -143,7 +160,7 @@ async.series([
                                     },
                                     function(callback){
                                         //read trip table input
-                                        var stream = fs.createReadStream("./Data/" + par.triptablefilename);
+                                        var stream = fs.createReadStream(triptableFile);
                                         multi = redisClient.multi();
                                         multi.select(7); 
                                         var csvStream = csv({headers : true})
@@ -166,7 +183,7 @@ async.series([
                             //make call
                             function(callback){
                                 console.log('call mv');
-                                request.get('http://localhost:8080',
+                                request.get(workerIP,
                                 {json:{'task':'mv','iter':iter}},
                                 function(error,response,body){
                                     console.log('end of move vehicles ' + body);
