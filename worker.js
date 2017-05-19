@@ -10,19 +10,44 @@ var bodyParser = require('body-parser');
 var async = require('async');
 var math = require('mathjs');
 var Scripto = require('redis-scripto');
-    
+var logging = require('@google-cloud/logging')();
+var gcs = require('@google-cloud/storage')();
+require('@google-cloud/debug-agent').start({ allowExpressions: true });
+//create storage sink
+var storageName = "dta-cluster-storage"; 
+var bucket = gcs.bucket(storageName);
+bucket.upload('*', function(err, file) {
+  if (!err) {
+
+  }
+});
+
+var workerlog = logging.log('workerlog');
+var resource = {type: 'global'};
+var entry = workerlog.entry({ resource: resource }, 
+  "worker start!"
+);
+
+console.log("/***worker start***/"); 
+
+workerlog.write([
+    entry
+  ], function (err, apiResponse) {     
+    });
+
 var timeHash = new hashtable();     //link time
 var distHash = new hashtable();     //link distance
 var nodeHash = new hashtable();     //network topology
 var tollHash = new hashtable();     //toll on the link
 var timeFFHash = new hashtable();   //free flow time on link
 var arrLink = [];
- 
-/*//local test
+/*
+//local test
 var redisIP = "redis://127.0.0.1:6379";    
-var paraFile = "./Data/parameters.json";
-var luaScript = './task.lua';
-*/
+//var paraFile = "./Data/parameters.json";
+var paraFile = "/app/parameters.json";
+var luaScript = '/app/task.lua';
+/*
 //deploy to cluster
 var redisIP = process.env.REDIS_PORT
 var paraFile = "/app/parameters.json";
@@ -32,6 +57,7 @@ var redisClient = redis.createClient({url:redisIP}),multi;
 var jsonParser = bodyParser.json();
 //var eventEmitter = new events.EventEmitter();
 var par = JSON.parse(fs.readFileSync(paraFile));
+var linkFile = '/app/' + par.linkfilename;
 
 //load redis lua script
 var scriptManager = new Scripto(redisClient);
@@ -53,7 +79,7 @@ var rdcsv = function Readcsv(mode,pType,spZone,callback) {
     var ftypeBan = [];
   }
   arrLink.length = 0;
-  var stream = fs.createReadStream("./Data/" + par.linkfilename);
+  var stream = fs.createReadStream(linkFile);
   var csvStream = csv({headers : true})
       .on("data", function(data){
         //create time, toll, dist, and free flow time hash table
@@ -541,3 +567,4 @@ router.get('/', function(req,res){
 });
 app.use('/', router);
 var server = app.listen(8080);
+*/
