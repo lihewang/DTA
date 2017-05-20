@@ -6,6 +6,7 @@ docker run -d -p 6379:6379 redis:alpine
 
 //Tag docker image before pushing it to Google Container Registory
 docker tag redis:alpine gcr.io/bright-primacy-140715/redis:alpine
+sudo docker tag launcher.gcr.io/google/redis3:latest gcr.io/bright-primacy-140715/redis:3
 
 //Build docker image
 sudo docker build -f ./worker_Docker/Dockerfile . -t gcr.io/bright-primacy-140715/worker:1.0
@@ -39,8 +40,12 @@ kubectl run redis-server5 --image=gcr.io/bright-primacy-140715/redis:redis-alpin
 sudo kubectl create -f ./redis.yaml
 sudo kubectl create -f ./worker.yaml
 
+//Expose port
+sudo kubectl expose deployment worker --type=LoadBalancer --port 8080
+sudo kubectl expose deployment redis --type=LoadBalancer --port 6379
+
 //Delete deployment
-kubectl delete -f ./redis.yaml
+sudo kubectl delete -f ./redis.yaml
 sudo kubectl delete -f ./worker.yaml
 
 //ssh to the pod
