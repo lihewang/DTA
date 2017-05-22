@@ -8,13 +8,14 @@ docker run -d -p 6379:6379 redis:alpine
 docker tag redis:alpine gcr.io/bright-primacy-140715/redis:alpine
 sudo docker tag launcher.gcr.io/google/redis3:latest gcr.io/bright-primacy-140715/redis:3
 
-//Build docker image
+//Build worker docker image
 sudo docker build -f ./worker_Docker/Dockerfile . -t gcr.io/bright-primacy-140715/worker:1.0
+sudo docker build -f ./main_Docker/Dockerfile . -t gcr.io/bright-primacy-140715/main:1.0
 
 //Push docker image to GC Registory
 gcloud docker -- push gcr.io/bright-primacy-140715/redis:alpine
-sudo gcloud docker -- push gcr.io/bright-primacy-140715/main:1.0
 sudo gcloud docker -- push gcr.io/bright-primacy-140715/worker:1.0
+sudo gcloud docker -- push gcr.io/bright-primacy-140715/main:1.0
 
 //Create GC cluster*
 sudo gcloud container clusters create dta-cluster --zone us-central1-a --num-nodes=3 --machine-type=f1-micro --scopes https://www.googleapis.com/auth/cloud_debugger
@@ -28,6 +29,9 @@ sudo gcloud init
 //Get root access
 sudo -i
 
+//Get kube-dns
+sudo kubectl get svc kube-dns --namespace=kube-system
+
 //Deploy kubernetes dashboard 
 sudo kubectl proxy
 http://localhost:8001/ui
@@ -39,6 +43,7 @@ kubectl run redis-server5 --image=gcr.io/bright-primacy-140715/redis:redis-alpin
 //Create deployment
 sudo kubectl create -f ./redis.yaml
 sudo kubectl create -f ./worker.yaml
+sudo kubectl create -f ./main.yaml
 
 //Expose port
 sudo kubectl expose deployment worker --type=LoadBalancer --port 8080
