@@ -49,8 +49,7 @@ var paraFile = "/app/parameters.json";
 var luaScript = '/app/task.lua';
 */
 //deploy to cluster
-//var redisIP = 'http://redis.default.svc.cluster.local:6379';
-var redisIP = "redis://10.0.0.237:6379";
+var redisIP = 'redis://redis.default.svc.cluster.local:6379';
 var paraFile = "/app/parameters.json";
 var luaScript = '/app/task.lua';
 console.log('redis IP ' + redisIP);

@@ -18,8 +18,8 @@ var luaScript = './msa.lua';
 */
 //deploy to cluster
 //var redisIP = process.env.REDIS_PORT;
-var redisIP = "redis://10.0.0.237:6379";
-var workerIP = "http://10.0.0.80:8080";
+var redisIP = "redis://redis.default.svc.cluster.local:6379";
+var workerIP = "http://worker.default.svc.cluster.local:8080";
 var appFolder = "/app";
 var paraFile = appFolder + "/parameters.json";
 var luaScript = appFolder + '/msa.lua';
