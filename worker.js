@@ -10,9 +10,10 @@ var bodyParser = require('body-parser');
 var async = require('async');
 var math = require('mathjs');
 var Scripto = require('redis-scripto');
-var logging = require('@google-cloud/logging')();
+//var logging = require('@google-cloud/logging')();
 var gcs = require('@google-cloud/storage')();
-require('@google-cloud/debug-agent').start({ allowExpressions: true });
+//require('@google-cloud/debug-agent').start({ allowExpressions: true });
+/*
 //create storage sink
 var storageName = "dta-cluster-storage"; 
 var bucket = gcs.bucket(storageName);
@@ -27,13 +28,12 @@ var resource = {type: 'global'};
 var entry = workerlog.entry({ resource: resource }, 
   "worker start!"
 );
-
-console.log("/***worker start***/"); 
-
 workerlog.write([
     entry
   ], function (err, apiResponse) {     
     });
+*/
+console.log("/***worker start 06/01/2017***/"); 
 
 var timeHash = new hashtable();     //link time
 var distHash = new hashtable();     //link distance
@@ -47,11 +47,13 @@ var redisIP = "redis://127.0.0.1:6379";
 //var paraFile = "./Data/parameters.json";
 var paraFile = "/app/parameters.json";
 var luaScript = '/app/task.lua';
-/*
+*/
 //deploy to cluster
-var redisIP = process.env.REDIS_PORT
+//var redisIP = 'http://redis.default.svc.cluster.local:6379';
+var redisIP = "redis://10.0.0.237:6379";
 var paraFile = "/app/parameters.json";
 var luaScript = '/app/task.lua';
+console.log('redis IP ' + redisIP);
 
 var redisClient = redis.createClient({url:redisIP}),multi;
 var jsonParser = bodyParser.json();
@@ -563,8 +565,9 @@ router.get('/', function(req,res){
               console.log('end moving vehicle loop ' + results);
               res.send('mv finished');
           });
+      }else{
+        res.send('Hello from worker');
       }
 });
 app.use('/', router);
 var server = app.listen(8080);
-*/

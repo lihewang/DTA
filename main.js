@@ -10,22 +10,19 @@ var Scripto = require('redis-scripto');
 
 // redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.vHT
 //  6.shortest path task 7.move vehicle task
-
+console.log("/***main start 06/02/2017***/"); 
 /*//local test
 var redisIP = "redis://127.0.0.1:6379";    
 var paraFile = "./Data/parameters.json";
 var luaScript = './msa.lua';
-var linkFile = "./Data/" + par.linkfilename;
-var triptableFile = "./Data/" + par.triptablefilename;
-var workerIP = 'http://localhost:8080';
 */
 //deploy to cluster
-var redisIP = process.env.REDIS_PORT;
-var paraFile = "/app/parameters.json";
-var luaScript = '/app/msa.lua';
-var linkFile = "/app/" + par.linkfilename;
-var triptableFile = "/app/" + par.triptablefilename;
-var workerIP = process.env.WORKER_PORT;
+//var redisIP = process.env.REDIS_PORT;
+var redisIP = "redis://10.0.0.237:6379";
+var workerIP = "http://10.0.0.80:8080";
+var appFolder = "/app";
+var paraFile = appFolder + "/parameters.json";
+var luaScript = appFolder + '/msa.lua';
 
 var redisClient = redis.createClient({url:redisIP}),multi;
 var arrLink = [];
@@ -44,7 +41,9 @@ scriptManager.loadFromFile('msa',luaScript);
 async.series([
     //read parameters
     function(callback){
+        console.log("begin read parameters");
         par = JSON.parse(fs.readFileSync(paraFile));
+        console.log("end read parameters");
         //clear link db
         multi = redisClient.multi();
         multi.select(2);  
@@ -69,7 +68,7 @@ async.series([
                     //read link file
                     function(callback){
                         arrLink = [];
-                        var stream = fs.createReadStream(linkFile);
+                        var stream = fs.createReadStream(appFolder + "/" + par.linkfilename);
                         var csvStream = csv({headers : true})
                             .on("data", function(data){
                                 for (var i = 1; i <= par.timesteps; i++) { 
@@ -160,7 +159,7 @@ async.series([
                                     },
                                     function(callback){
                                         //read trip table input
-                                        var stream = fs.createReadStream(triptableFile);
+                                        var stream = fs.createReadStream(appFolder + "/" + par.triptablefilename);
                                         multi = redisClient.multi();
                                         multi.select(7); 
                                         var csvStream = csv({headers : true})
@@ -306,5 +305,5 @@ async.series([
             });
         }],
     function(){
-        process.exit(0); //End server
+        //process.exit(0); //End server
     });
