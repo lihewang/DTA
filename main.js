@@ -7,10 +7,14 @@ var csv = require('fast-csv');
 var hashtable = require('hashtable');
 var math = require('mathjs');
 var Scripto = require('redis-scripto');
+var gcs = require('@google-cloud/storage')({
+    projectId: 'bright-primacy-140715',
+    credentials: require('/app/Minikube.json')
+});
 
 // redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.vHT
 //  6.shortest path task 7.move vehicle task
-console.log("/***main start 06/02/2017***/"); 
+console.log("/***main start 06/06/2017***/"); 
 /*//local test
 var redisIP = "redis://127.0.0.1:6379";    
 var paraFile = "./Data/parameters.json";
@@ -33,6 +37,10 @@ var betaHash = new hashtable();
 var capHash = new hashtable();
 var iter = 0;
 var gap = 1;
+
+//create storage sink
+var storageName = "dta-model"; 
+var bucket = gcs.bucket(storageName);
 
 //load redis lua script
 var scriptManager = new Scripto(redisClient);
@@ -293,13 +301,16 @@ async.series([
                         },
                         function(callback){ 
                             //console.log(rcd);           
-                            csv.writeToStream(fs.createWriteStream("vol.csv"), rcd, {headers: true})
+                            csv.writeToStream(fs.createWriteStream("/output/vol.csv"), rcd, {headers: true})
                                 .on("finish",function(){
-                                    console.log('end');
+                                    console.log('end');                                    
                                     callback();
                                 });                                                   
                         }],
-                        function(err,results){                            
+                        function(err,results){  
+                            bucket.upload('/output/*', function(err, file) {
+                                console.log(file);
+                            });                          
                             callback(); 
                         });          
             });

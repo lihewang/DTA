@@ -8,7 +8,7 @@ docker run -d -p 6379:6379 redis:alpine
 docker tag redis:alpine gcr.io/bright-primacy-140715/redis:alpine
 sudo docker tag launcher.gcr.io/google/redis3:latest gcr.io/bright-primacy-140715/redis:3
 
-//Build worker docker image
+//Build docker image
 sudo docker build -f ./worker_Docker/Dockerfile . -t gcr.io/bright-primacy-140715/worker:latest
 sudo docker build -f ./main_Docker/Dockerfile . -t gcr.io/bright-primacy-140715/main:latest
 
@@ -42,7 +42,6 @@ http://localhost:8001/ui
 //Deploy container to cluster
 kubectl run redis-server5 --image=gcr.io/bright-primacy-140715/redis:redis-alpine --port=6379
 
-
 //Create deployment
 sudo kubectl create -f ./redis.yaml
 sudo kubectl create -f ./worker.yaml
@@ -68,3 +67,7 @@ sudo gcloud container clusters delete dta-cluster --zone=us-central1-a
 
 //image location
 gcr.io/bright-primacy-140715/worker:1.0
+
+//minikube commands
+//start minikube
+minikube start
