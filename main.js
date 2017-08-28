@@ -4,43 +4,38 @@ var request = require('request');
 var async = require('async');
 var fs = require('fs');
 var csv = require('fast-csv');
-var hashtable = require('hashtable');
+var hashMap = require('hashmap');
 var math = require('mathjs');
 var Scripto = require('redis-scripto');
-var gcs = require('@google-cloud/storage')({
-    projectId: 'bright-primacy-140715',
-    credentials: require('/app/Minikube.json')
-});
 
-// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.vHT
+// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.VHT
 //  6.shortest path task 7.move vehicle task
-console.log("/***main start 06/06/2017***/"); 
-/*//local test
-var redisIP = "redis://127.0.0.1:6379";    
-var paraFile = "./Data/parameters.json";
-var luaScript = './msa.lua';
-*/
-//deploy to cluster
-//var redisIP = process.env.REDIS_PORT;
-var redisIP = "redis://redis.default.svc.cluster.local:6379";
-var workerIP = "http://worker.default.svc.cluster.local:8080";
-var appFolder = "/app";
+
+var currTime = new Date()
+console.log("/***Main start " + currTime + " ***/"); 
+
+
+//local test
+var redisIP = "redis://127.0.0.1:6379";
+var workerIP = "http://localhost:8080"
+
+var appFolder = "./app";
 var paraFile = appFolder + "/parameters.json";
 var luaScript = appFolder + '/msa.lua';
-
+var outputFile = "./output/vol.csv"
 var redisClient = redis.createClient({url:redisIP}),multi;
 var arrLink = [];
 var par = null;
-var timeFFHash = new hashtable();
-var alphaHash = new hashtable();
-var betaHash = new hashtable();
-var capHash = new hashtable();
+var timeFFHash = new hashMap();
+var alphaHash = new hashMap();
+var betaHash = new hashMap();
+var capHash = new hashMap();
 var iter = 0;
 var gap = 1;
 
 //create storage sink
-var storageName = "dta-model"; 
-var bucket = gcs.bucket(storageName);
+//var storageName = "dta-model"; 
+//var bucket = gcs.bucket(storageName);
 
 //load redis lua script
 var scriptManager = new Scripto(redisClient);
@@ -78,124 +73,88 @@ async.series([
                         arrLink = [];
                         var stream = fs.createReadStream(appFolder + "/" + par.linkfilename);
                         var csvStream = csv({headers : true})
-                            .on("data", function(data){
+                            .on("data", function (data) {
+                                var anode = data['A'];
+                                var bnode = data['B'];
+                                anode = anode.trim();
+                                bnode = bnode.trim();
+                                var data_id = anode + '-' + bnode;
                                 for (var i = 1; i <= par.timesteps; i++) { 
-                                    arrLink.push(data['ID'] + ':' + i); 
+                                    arrLink.push(data_id + ':' + i); 
                                 }
-                                timeFFHash.put(data['ID'],data['Dist']/data['Spd']*60);
-                                alphaHash.put(data['ID'],data['Alpha']);
-                                betaHash.put(data['ID'],data['Beta']);
-                                capHash.put(data['ID'],data['Cap']);
+                                timeFFHash.set(data_id,data['Dist']/data['Spd']*60);
+                                alphaHash.set(data_id,data['Alpha']);
+                                betaHash.set(data_id,data['Beta']);
+                                capHash.set(data_id,data['Cap']);
                             })
                             .on("end", function(){      
                                 callback();
                             });     
                         stream.pipe(csvStream);
                     },
-                    //create shortest path
+                    //create shortest paths for all time steps and modes               
                     function(callback){
-                        console.log('start of sp');
-                        async.series([
-                            //put task to db
-                            function(callback){               
-                                async.series([
-                                    function(callback){
-                                        multi = redisClient.multi();
-                                        //clear shortest path db
-                                        multi.select(1);  
-                                        multi.flushdb();
-                                        //clear task db
-                                        multi.select(6);  
-                                        multi.flushdb();                     
-                                        multi.exec(function(){
-                                            callback();
-                                        });
-                                    },
-                                    function(callback){
-                                        multi = redisClient.multi();
-                                        //mode, timestep and start zone
-                                        par.modes.forEach(function(md){                       
-                                            for (var i = 1; i <= par.timesteps; i++) {
-                                                for (var j = 1; j <= par.zonenum; j++) {                          
-                                                    multi.rpush('to-do',i + '-' + j + '-' + md);  //tp-zone-SOV    
-                                                }
-                                                //decision point
-                                                par.dcpnt.forEach(function(dcp){
-                                                    multi.rpush('to-do',i + '-' + dcp + '-' + md + '-tl'); //tp-zone-SOV-tl
-                                                    multi.rpush('to-do',i + '-' + dcp + '-' + md + '-tf'); //tp-zone-SOV-tf
-                                                });
-                                            }
-                                        });                                              
-                                        multi.exec(function(){
-                                            callback();
-                                        });                    
-                                    }],
-                                    function(err,results){
-                                        callback(); 
-                                    }
-                                );                               
-                            },
-                            //make call
-                            function(callback){
-                                request.get(workerIP,
-                                {json:{'task':'sp','iter':iter}},
-                                function(error,response,body){
-                                    console.log(body);
-                                    callback();
-                                });
-                            }],
-                            function(err,results){
-                                callback();
+                        console.log('start building sp'); 
+                        //create job queue in redis
+                        multi = redisClient.multi();
+                        multi.select(6);
+                        multi.flushdb(); 
+                        par.modes.forEach(function (md) {   //loop modes
+                            for (var i = 1; i <= par.timesteps; i++) {  //loop time steps
+                                //zones
+                                for (var j = 1; j <= par.zonenum; j++) {
+                                    multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + j + '-' + md + '-ct');
+                                }
+                                //decision point
+                                par.dcpnt.forEach(function (dcp) {
+                                    //console.log("push decison point " + dcp + " to to-do list");
+                                    var t2 = ['tl', 'tf'];
+                                    t2.forEach(function (t) {
+                                        multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + j + '-' + md + '-' + t);
+                                    });
+                                 });
                             }
-                        );      
+                        });
+                        multi.exec(function () {
+                            callback();
+                        });
+                    },
+                    //publish sp job
+                    function (callback) {
+                        redisClient.publish('job', 'sp', function (err, result) {
+                            console.log('sp job created in redis ' + result);                           
+                            callback();
+                        }); 
                     },
                     //move vehicles
                     function(callback){
                         console.log('***moving vehicles***');
+                        multi = redisClient.multi();
+                        multi.select(7);
+                        multi.flushdb(); 
                         async.series([
-                            //put task to db
+                            //set task to db
                             function(callback){               
                                 async.series([
                                     function(callback){
-                                        multi = redisClient.multi();
-                                        //clear task db
-                                        multi.select(7);  
-                                        multi.flushdb();                                         
-                                        multi.exec(function(){
-                                            callback();
-                                        });
-                                    },
-                                    function(callback){
-                                        //read trip table input
+                                        //read trip table inset
                                         var stream = fs.createReadStream(appFolder + "/" + par.triptablefilename);
-                                        multi = redisClient.multi();
-                                        multi.select(7); 
                                         var csvStream = csv({headers : true})
                                             .on("data", function(data){ 
                                                 if(parseInt(data['I'])>0){                            
-                                                    multi.rpush('to-do', data['I']+'-'+data['J']+'-'+data['TP']+'-'+data['Mode']+'-'+data['Vol']+'-zone');
+                                                    multi.RPUSH('task', 'mv-' + iter + '-' + data['I'] + '-' + data['J'] + '-' + data['TP'] + '-' + data['Mode'] + '-' + data['Vol'] + '-zone');
                                                 }
                                             })
                                             .on("end", function(){  
-                                                multi.exec(function(){
-                                                    callback(null,'read trip table done');
-                                                });                                                  
-                                            });    
+                                                multi.exec(function () {
+                                                    callback();
+                                                });
+                                            });                                                      
                                         stream.pipe(csvStream); 
                                     }],
-                                    function(err,results){
-                                        callback(); 
+                                    function (err, results) {
+                                        console.log(results);
                                     }); 
-                            },
-                            //make call
-                            function(callback){
-                                console.log('call mv');
-                                request.get(workerIP,
-                                {json:{'task':'mv','iter':iter}},
-                                function(error,response,body){
-                                    console.log('end of move vehicles ' + body);
-                                    callback();
-                                });
                             }],
                         function(err,results){
                             callback(); //move vehicles callback
@@ -301,20 +260,21 @@ async.series([
                         },
                         function(callback){ 
                             //console.log(rcd);           
-                            csv.writeToStream(fs.createWriteStream("/output/vol.csv"), rcd, {headers: true})
+                            csv.writeToStream(fs.createWriteStream(outputFile), rcd, {headers: true})
                                 .on("finish",function(){
                                     console.log('end');                                    
                                     callback();
                                 });                                                   
                         }],
                         function(err,results){  
-                            bucket.upload('/output/*', function(err, file) {
+                            /*bucket.upload('/outset/*', function(err, file) {
                                 console.log(file);
-                            });                          
+                            }); */                        
                             callback(); 
                         });          
             });
         }],
-    function(){
+    function () {
+        console.log("/***Main end " + currTime + " ***/");
         //process.exit(0); //End server
     });
