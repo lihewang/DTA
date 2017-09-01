@@ -14,7 +14,7 @@ var log4js = require('log4js');
 
 log4js.configure({
     appenders: {
-        everything: { type: 'file', filename: 'worker_logs.log', backups: 1 },
+        everything: { type: 'file', filename: 'worker.log', backups: 1 },
         console: { type: 'console' }
     },
     categories: {
@@ -32,6 +32,9 @@ var nodeHash_all = new hashMap(); //network topology of all links
 var nodeHash = new hashMap();
 var tollHash = new hashMap();     //toll on the link
 var timeFFHash = new hashMap();   //free flow time on link
+var alphaHash = new hashMap();
+var betaHash = new hashMap();
+var capHash = new hashMap();
 var arrLink = [];
 
 //deploy to cluster
@@ -80,7 +83,10 @@ var rdcsv = function Readcsv(callback) {
             distHash.set(data_id, data['Dist']);
             typeHash.set(data_id, data['Ftype']);
             timeFFHash.set(data_id, data['Dist'] / data['Spd'] * 60);
-            
+            alphaHash.set(data_id, data['Alpha']);
+            betaHash.set(data_id, data['Beta']);
+            capHash.set(data_id, data['Cap']);
+
             //network topology
             var banLink = false;
             //console.log("read link " + data_id);
@@ -112,6 +118,10 @@ var ban = function banLinks(mode, pType, spZone, callback) {
     }
     //loop each link
     nodeHash.forEach(function (value, key) {
+        //ban centroids
+        if (key <= par.zonenum && key != spZone){
+            nodeHash.set(key, []);
+        }
         var bNds = nodeHash.get(key);
         bNds.forEach(function (bNd) {
             var tp = typeHash.get(key + '-' + bNd);
@@ -192,34 +202,35 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, callback
                 if (nodeHash.has(currNode)) {            //currNode has downsteam nodes
                     var dnNodes = nodeHash.get(currNode.toString());  //get new frontier nodes
                     //Update time on new nodes
-                    dnNodes.forEach(function (dnNode) {
-                        //logger.debug(`[processor ${process.pid}]` + ' node ' + currNode + ' <-- ' + 'node ' + dnNode);
-                        if (!settledNodes.has(dnNode)) {    //exclude settled nodes
-                            //get time of dnNode
-                            var timeCurrNode = parseFloat(visitedNodes.get(currNode.toString()));
-                            var timePeriod = math.min(par.timesteps, math.floor(timeCurrNode / 15) + parseInt(tp));
-                            var tempTime = timeCurrNode + parseFloat(timeHash.get(currNode + '-' + dnNode + ':' + timePeriod));
+                    if (dnNodes != []){
+                        dnNodes.forEach(function (dnNode) {
+                            //logger.debug(`[processor ${process.pid}]` + ' node ' + currNode + ' <-- ' + 'node ' + dnNode);
+                            if (!settledNodes.has(dnNode)) {    //exclude settled nodes
+                                //get time of dnNode
+                                var timeCurrNode = parseFloat(visitedNodes.get(currNode.toString()));
+                                var timePeriod = math.min(par.timesteps, math.floor(timeCurrNode / 15) + parseInt(tp));
+                                var tempTime = timeCurrNode + parseFloat(timeHash.get(currNode + '-' + dnNode + ':' + timePeriod));
 
-                            if (visitedNodes.has(dnNode)) {
-                                //dnNode has been checked before
-                                if (tempTime < visitedNodes.get(dnNode.toString())) {    //update time when the path is shorter                   
+                                if (visitedNodes.has(dnNode)) {
+                                    //dnNode has been checked before
+                                    if (tempTime < visitedNodes.get(dnNode.toString())) {    //update time when the path is shorter                   
+                                        pqNodes.enq({ t: tempTime, nd: dnNode });
+                                        parentNodes.set(dnNode, currNode);
+                                        //console.log("set node " + dnNode + "'s parent as " + parentNodes.get(dnNode.toString()));
+                                        visitedNodes.set(dnNode, tempTime);
+                                        //logger.debug('visit again ' + dnNode + ', ' + tempTime);
+                                    }
+                                } else {
+                                    //first time checked node
                                     pqNodes.enq({ t: tempTime, nd: dnNode });
                                     parentNodes.set(dnNode, currNode);
-                                    //console.log("set node " + dnNode + "'s parent as " + parentNodes.get(dnNode.toString()));
+                                    //logger.debug("set node " + dnNode + "'s parent as " + parentNodes.get(dnNode.toString()));
                                     visitedNodes.set(dnNode, tempTime);
-                                    //logger.debug('visit again ' + dnNode + ', ' + tempTime);
+                                    //logger.debug('visit first time ' + dnNode + ', ' + tempTime);
                                 }
-                            } else {
-                                //first time checked node
-                                pqNodes.enq({ t: tempTime, nd: dnNode });
-                                parentNodes.set(dnNode, currNode);
-                                //logger.debug("set node " + dnNode + "'s parent as " + parentNodes.get(dnNode.toString()));
-                                visitedNodes.set(dnNode, tempTime);
-                                //logger.debug('visit first time ' + dnNode + ', ' + tempTime);
-                            }
-                        }  //end if
-
-                    }); //end forEach
+                            }  //end if
+                        });    //end forEach
+                    }
                 }  //end if
                 //logger.debug('pqNode size = ' + pqNodes.size());
             }
@@ -578,6 +589,74 @@ if (cluster.isMaster) {
                 //whilst callback
                 function (err, results) {
                     logger.info(`[${process.pid}] mv processed total of ` + cnt);
+                });
+        }
+        else if (message = "linkupdate") {
+            var linktp = '';
+            var cnt = 0;
+            async.during(
+                //test function
+                function (callback) {
+                    scriptManager.run('pop', [8, 'task'], [], function (err, result) {
+                        //logger.debug(`[${process.pid}] link update get task ` + result);
+                        if (result != null && result != 'done') {
+                            linktp = result;
+                        } else {
+                            //all link update tasks finished
+                            if (result == null) {
+                                logger.debug(`[${process.pid}] publish linkupdate_done`);
+                                redisClient.publish('job', 'linkupdate_done');
+                            }
+                        }
+                        return callback(null, result != null && result != 'done');
+                    });
+                },
+                function (callback) {
+                    var vol = 0;          
+                    async.eachSeries(par.modes, function (md, callback) {
+                        if (iter >= 2) {
+                            //MSA Volume
+                            var lastIter = iter - 1;
+                            var key1 = result + ":" + md + ":" + iter;
+                            var key2 = result + ":" + md + ":" + lastIter;
+                            scriptManager.run('msa', [key1, key2, iter], [], function (err, result) {
+                                //logger.debug('lua err=' + err + ", result=" + result);
+                                vol = vol + result.split(',')[2];
+                            });
+                        }
+                        //moving average volume
+
+                    });
+                    //congested time
+                    var linkID = linktp.split(':')[0];
+                    var cgTime = timeFFHash.get(linkID) * (1 + alphaHash.get(linkID) * math.pow(vol * 4 / capHash.get(linkID), betaHash.get(linkID)));
+                    var vht = vol * cgTime;
+                    if (vht > 0) {
+                        logger.debug('iter=' + iter + ', link=' + linkID + ', tp=' + linktp.split(':')[1] + ', VHT=' + math.round(vht, 2) +
+                            ', vol=' + parseFloat(vol) + ', cgtime=' + math.round(cgTime, 3));
+                    }
+                    multi.select(3);
+                    multi.set(linktp, cgTime);
+                    multi.exec(function () {
+                        //VHT
+                        multi = redisClient.multi();
+                        multi.select(4);
+                        if (iter >= 2) {
+                            multi.get(linktp, function (err, result) {
+                                VHT_square = VHT_square + math.pow((vht - result) / 1000, 2);
+                                VHT_tot = VHT_tot + result / 1000;
+                            });
+                        }
+                        multi.set(linktp, vht);
+                        multi.exec(function () {
+                            cnt = cnt + 1;
+                            callback(null, 'VHT done');
+                        });
+                    });   
+                },
+                //whilst callback
+                function (err, results) {
+                    logger.info(`[${process.pid}] link update processed total of ` + cnt);
                 });
         }
     });

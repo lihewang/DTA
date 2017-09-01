@@ -1,7 +1,7 @@
 //main model controls
 
 // redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.VHT
-//  6.shortest path task 7.move vehicle task
+//  6.shortest path task 7.move vehicle task 8.link task
 
 var redis = require('redis');
 var request = require('request');
@@ -16,7 +16,7 @@ var log4js = require('log4js');
 
 log4js.configure({
     appenders: {
-        everything: { type: 'file', filename: 'worker_logs.log', backups: 1 },
+        everything: { type: 'file', filename: 'main.log', backups: 1 },
         console: { type: 'console' }
     },
     categories: {
@@ -66,7 +66,7 @@ async.series([
     },
     //read link file
     function (callback) {
-        arrLink = [];
+        arrLink = [];   //link A-link B:tp
         var stream = fs.createReadStream(appFolder + "/" + par.linkfilename);
         var csvStream = csv({ headers: true })
             .on("data", function (data) {
@@ -77,6 +77,7 @@ async.series([
                 var data_id = anode + '-' + bnode;
                 for (var i = 1; i <= par.timesteps; i++) {
                     arrLink.push(data_id + ':' + i);
+                    multi.RPUSH(data_id + ':' + i);
                 }
                 timeFFHash.set(data_id, data['Dist'] / data['Spd'] * 60);
                 alphaHash.set(data_id, data['Alpha']);
@@ -84,6 +85,8 @@ async.series([
                 capHash.set(data_id, data['Cap']);
             })
             .on("end", function (result) {
+                multi.exec(function () {
+                });
                 logger.info("read network total of " + result + " links");
                 callback();
             });
@@ -152,6 +155,19 @@ var model_Loop = function () {
                             callback();
                         });
                     });
+        },
+        //link task
+        function (callback) {
+            multi = redisClient.multi();
+            multi.select(8);
+            multi.flushdb();
+            arrLink.forEach(function (link) {
+                multi.RPUSH('task', link);
+            });
+            multi.exec(function (err, result) {
+                logger.info('link task err=' + err);
+                callback();
+            });
         }],
         function (err, results) {
 
@@ -177,70 +193,12 @@ redisJob.on("message", function (channel, message) {
         }); 
     }
     if (message == 'mv_done') {
+        redisClient.publish('job', 'linkupdate', function (err, result) {
+            logger.info('link update finished ' + result);
+        });
         var VHT_square = 0;
         var VHT_tot = 0;
         async.series([
-            //Moving average volume
-            function (callback) {
-
-                callback();
-            },
-            //Update time
-            function (callback) {
-                multi = redisClient.multi();            
-                async.eachSeries(arrLink,
-                    function (item, callback) {    //loop links (96 time steps)
-                        var vol = 0;    //vol of all modes        
-                        multi.select(2);
-                        //total vol of all modes
-                        async.eachSeries(par.modes, function (md, callback) {
-                            if (iter >= 2) {   //MSA Volume
-                                var lastIter = iter - 1;
-                                var key1 = item + ":" + md + ":" + iter;
-                                var key2 = item + ":" + md + ":" + lastIter;
-                                scriptManager.run('msa', [key1, key2, iter], [], function (err, result) {
-                                    //logger.debug('lua err=' + err + "," + result);
-                                });
-                            }
-                            multi.get(item + ":" + md + ":" + iter, function (err, result) {
-                                if (result != null) {
-                                    vol = vol + result;
-                                }
-                            });
-                            callback();
-                        })
-                        multi.exec(function () {
-                            var linkID = item.split(':')[0];
-                            //BPR function
-                            var cgTime = timeFFHash.get(linkID) * (1 + alphaHash.get(linkID) * math.pow(vol * 4 / capHash.get(linkID), betaHash.get(linkID)));
-                            var vht = vol * cgTime;
-                            if (vht > 0) {
-                                logger.debug('iter=' + iter + ', link=' + linkID + ', tp=' + item.split(':')[1] + ', VHT=' + math.round(vht, 2) +
-                                    ', vol=' + parseFloat(vol) + ', cgtime=' + math.round(cgTime, 3));
-                            }
-                            multi.select(3);
-                            multi.set(item, cgTime);
-                            multi.exec(function () {
-                                //VHT
-                                multi = redisClient.multi();
-                                multi.select(4);
-                                if (iter >= 2) {
-                                    multi.get(linkID + ":" + item.split(':')[1], function (err, result) {
-                                        VHT_square = VHT_square + math.pow((vht - result) / 1000, 2);
-                                        VHT_tot = VHT_tot + result / 1000;
-                                    });
-                                }
-                                multi.set(linkID + ":" + item.split(':')[1], vht);
-                                multi.exec(function () {
-                                    callback(null, 'VHT done');
-                                });
-                            });                       
-                        });
-                    },
-                    function (err) {
-                        callback();
-                    });       
-            },
             function (callback) {
                 //calculate gap
                 if (iter >= 2) {
