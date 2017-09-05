@@ -4,7 +4,6 @@ var fs = require('fs');
 var csv = require('fast-csv');
 var redis = require('redis');
 var pq = require('priorityqueuejs');
-var bodyParser = require('body-parser');
 var async = require('async');
 var math = require('mathjs');
 var Scripto = require('redis-scripto');
@@ -45,10 +44,10 @@ var appFolder = "./app";
 var paraFile = appFolder + "/parameters.json";
 var luaScript_task = appFolder + '/task.lua';
 var luaScript_pop = appFolder + '/pop.lua';
+var luaScript_msa = appFolder + '/msa.lua';
 
 var redisClient = redis.createClient({ url: redisIP }), multi;
 var redisJob = redis.createClient({ url: redisIP }), multi;
-var jsonParser = bodyParser.json();
 var par = JSON.parse(fs.readFileSync(paraFile));
 var linkFile = appFolder + '/' + par.linkfilename;
 
@@ -56,6 +55,7 @@ var linkFile = appFolder + '/' + par.linkfilename;
 var scriptManager = new Scripto(redisClient);
 scriptManager.loadFromFile('task', luaScript_task);
 scriptManager.loadFromFile('pop', luaScript_pop);
+scriptManager.loadFromFile('msa', luaScript_msa);
 
 //********csv reader********
 var rdcsv = function Readcsv(callback) {
@@ -429,7 +429,7 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, callback
                         //logger.debug(`[${process.pid}]` + ' non decision point loop end ' + j);
                         j = j + 1;
                         callback();
-                    })
+                    });
             }
         },
         function (err) {
@@ -591,7 +591,9 @@ if (cluster.isMaster) {
                     logger.info(`[${process.pid}] mv processed total of ` + cnt);
                 });
         }
+        //update link volume and time
         else if (message = "linkupdate") {
+            var iter = 0;
             var linktp = '';
             var cnt = 0;
             async.during(
@@ -600,7 +602,8 @@ if (cluster.isMaster) {
                     scriptManager.run('pop', [8, 'task'], [], function (err, result) {
                         //logger.debug(`[${process.pid}] link update get task ` + result);
                         if (result != null && result != 'done') {
-                            linktp = result;
+                            linktp = result.split(':')[0] + ':' + result.split(':')[1];
+                            iter = result.split(':')[2];    
                         } else {
                             //all link update tasks finished
                             if (result == null) {
@@ -612,50 +615,58 @@ if (cluster.isMaster) {
                     });
                 },
                 function (callback) {
-                    var vol = 0;          
-                    async.eachSeries(par.modes, function (md, callback) {
-                        if (iter >= 2) {
-                            //MSA Volume
-                            var lastIter = iter - 1;
-                            var key1 = result + ":" + md + ":" + iter;
-                            var key2 = result + ":" + md + ":" + lastIter;
-                            scriptManager.run('msa', [key1, key2, iter], [], function (err, result) {
-                                //logger.debug('lua err=' + err + ", result=" + result);
-                                vol = vol + result.split(',')[2];
-                            });
-                        }
+                    var vol = 0;
+                    //loop modes
+                    async.series([
+                        //MSA Volume
+                        function (callback) {
+                            async.every(par.modes, function (md, callback) {
+                                    if (iter >= 2) {           
+                                        var lastIter = iter - 1;
+                                        var key1 = linktp + ":" + md + ":" + iter;
+                                        var key2 = linktp + ":" + md + ":" + lastIter;
+                                        //logger.debug(`[${process.pid}] ` + key1 + ", " + key2);
+                                        scriptManager.run('msa', [key1, key2, iter], [], function (err, result) {
+                                            //logger.debug('lua err=' + err + ", result=" + result);
+                                            vol = vol + parseFloat(result.split(',')[2]);
+                                            callback(null, true);
+                                        });
+                                    } else {
+                                        callback(null, true);
+                                    }
+                                },
+                                function (err, result) {
+                                    callback();
+                                });
+                        },
                         //moving average volume
 
-                    });
-                    //congested time
-                    var linkID = linktp.split(':')[0];
-                    var cgTime = timeFFHash.get(linkID) * (1 + alphaHash.get(linkID) * math.pow(vol * 4 / capHash.get(linkID), betaHash.get(linkID)));
-                    var vht = vol * cgTime;
-                    if (vht > 0) {
-                        logger.debug('iter=' + iter + ', link=' + linkID + ', tp=' + linktp.split(':')[1] + ', VHT=' + math.round(vht, 2) +
-                            ', vol=' + parseFloat(vol) + ', cgtime=' + math.round(cgTime, 3));
-                    }
-                    multi.select(3);
-                    multi.set(linktp, cgTime);
-                    multi.exec(function () {
-                        //VHT
-                        multi = redisClient.multi();
-                        multi.select(4);
-                        if (iter >= 2) {
-                            multi.get(linktp, function (err, result) {
-                                VHT_square = VHT_square + math.pow((vht - result) / 1000, 2);
-                                VHT_tot = VHT_tot + result / 1000;
-                            });
-                        }
-                        multi.set(linktp, vht);
-                        multi.exec(function () {
+                        //congested time
+                        function (callback) {
+                            var linkID = linktp.split(':')[0];
+                            var cgTime = timeFFHash.get(linkID) * (1 + alphaHash.get(linkID) * math.pow(vol * 4 / capHash.get(linkID), betaHash.get(linkID)));
+                            var vht = vol * cgTime;
+                            //if (vol > 0) {
+                                //logger.debug('iter=' + iter + ', link=' + linkID + ', tp=' + linktp.split(':')[1] + ', VHT=' + math.round(vht, 2) +
+                                //    ', vol=' + parseFloat(vol) + ', cgtime=' + math.round(cgTime, 3));
+                            //}
+                            //set congested time to redis
+                            multi = redisClient.multi();
+                            multi.select(3);
+                            multi.set(linktp, cgTime);
+                            multi.select(4);
+                            multi.set(linktp, vht);
+                            multi.exec(function (err, result) {
+                                callback();     
+                            });     
+                        }],
+                        function (err, result) {
                             cnt = cnt + 1;
-                            callback(null, 'VHT done');
+                            callback();
                         });
-                    });   
                 },
                 //whilst callback
-                function (err, results) {
+                function (err) {
                     logger.info(`[${process.pid}] link update processed total of ` + cnt);
                 });
         }
