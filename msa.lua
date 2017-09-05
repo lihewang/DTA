@@ -6,6 +6,6 @@ if z == 1 then
  local vp = redis.call("get",KEYS[2])
  local v = vp*(1-1/KEYS[3])+vc/KEYS[3]
  redis.call("set",KEYS[1],v)
- return "c=" .. vc .. ",p=" .. vp .. ",v=" .. v
+ return vc .. "," .. vp .. "," .. v
 end
-return "Not Exists"
+return "0,0,0"
