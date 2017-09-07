@@ -12,6 +12,7 @@ var hashMap = require('hashmap');
 var math = require('mathjs');
 var events = require('events');
 var log4js = require('log4js');
+var spinner = require('cli-spinner').Spinner;
 
 log4js.configure({
     appenders: {
@@ -23,20 +24,25 @@ log4js.configure({
     }
 });
 var logger = log4js.getLogger();
+process.stdout.write('\033c');  //clear console
+
 //clear log file
 fs.truncate('main.log', 0, function () {
     logger.info(`[${process.pid}] clear main log file`)
+});
+fs.truncate('worker.log', 0, function () {
+    logger.info(`[${process.pid}] clear worker log file`)
 });
 
 //Desktop deployment
 var redisIP = "redis://127.0.0.1:6379";
 var appFolder = "./app";
 var paraFile = appFolder + "/parameters.json";
-
 var outputFile = "./output/vol.csv"
 var redisClient = redis.createClient({ url: redisIP }), multi;
 var redisJob = redis.createClient({ url: redisIP }), multi;
 var arrLink = [];
+var arrTT = [];
 var par = null;
 var timeFFHash = new hashMap();
 var alphaHash = new hashMap();
@@ -46,8 +52,16 @@ var iter = 1;
 var gap = 1;
 var eventEmitter = new events.EventEmitter();
 
+//progress spinner
+var spnr_sp = new spinner('building shortest path.. %s');
+spnr_sp.setSpinnerString('|/-\\');
+var spnr_tt_read = new spinner('reading trip table file.. %s');
+spnr_tt_read.setSpinnerString('|/-\\');
+var spnr_mv = new spinner('moving vehicles.. %s');
+spnr_mv.setSpinnerString('|/-\\');
+
 //subscribe to job channel
-redisJob.subscribe("job");
+redisJob.subscribe("job_status");
 
 //read in files
 async.series([   
@@ -55,7 +69,7 @@ async.series([
         //read parameters
         par = JSON.parse(fs.readFileSync(paraFile));
         logger.info("read parameters");
-        //clear link db
+        //clear vol db
         multi = redisClient.multi();
         multi.select(2);  
         multi.flushdb(); 
@@ -76,7 +90,6 @@ async.series([
                 var data_id = anode + '-' + bnode;
                 for (var i = 1; i <= par.timesteps; i++) {
                     arrLink.push(data_id + ':' + i);
-                    multi.RPUSH(data_id + ':' + i);
                 }
                 timeFFHash.set(data_id, data['Dist'] / data['Spd'] * 60);
                 alphaHash.set(data_id, data['Alpha']);
@@ -84,9 +97,26 @@ async.series([
                 capHash.set(data_id, data['Cap']);
             })
             .on("end", function (result) {
-                multi.exec(function () {
-                });
                 logger.info("read network total of " + result + " links");
+                callback();
+            });
+        stream.pipe(csvStream);
+    },
+    //read trip table
+    function (callback) {
+        var stream = fs.createReadStream(appFolder + "/" + par.triptablefilename);
+        spnr_tt_read.start()
+        var csvStream = csv({ headers: true })
+            .on("data", function (data) {
+                if (parseInt(data['TP']) <= par.timesteps) {
+                    arrTT.push('mv-' + iter + '-' + data['I'] + '-' + data['J'] + '-' + data['TP'] + '-' + data['Mode'] + '-' + data['Vol'] + '-ct');
+                    //logger.debug('mv-' + iter + '-' + data['I'] + '-' + data['J'] + '-' + data['TP'] + '-' + data['Mode'] + '-' + data['Vol'] + '-ct');
+                }
+            })
+            .on("end", function (result) {
+                spnr_tt_read.stop();
+                process.stdout.write('\n');
+                logger.info("read trip table total of " + result + " zone pairs");
                 callback();
             });
         stream.pipe(csvStream);
@@ -123,40 +153,25 @@ var model_Loop = function () {
                     });
                 }
             });
-            multi.exec(function () {
-                redisClient.publish('job', 'sp', function (err, result) {
-                    logger.info('iter' + iter + ' sp job created in redis ' + err + ', ' + result);
-                    callback();
-                });
+            multi.exec(function (err, result) {
+                logger.info('iter' + iter + ' put sp tasks in redis');
+                callback();
             });
         },
         //put mv to redis
-        function (callback) {
+        function (callback) {           
             multi = redisClient.multi();
             multi.select(7);
             multi.flushdb();
-                //set task to db
-                async.series([
-                    function (callback) {
-                        //read trip table inset
-                        var stream = fs.createReadStream(appFolder + "/" + par.triptablefilename);
-                        var csvStream = csv({ headers: true })
-                                .on("data", function (data) {
-                                    if (parseInt(data['I']) > 0) {
-                                        multi.RPUSH('task', 'mv-' + iter + '-' + data['I'] + '-' + data['J'] + '-' + data['TP'] + '-' + data['Mode'] + '-' + data['Vol'] + '-ct');
-                                    }
-                                })
-                                .on("end", function () {
-                                    callback();
-                                });
-                            stream.pipe(csvStream);
-                    }],
-                    function (err, results) {
-                        multi.exec(function (err, result) {
-                            logger.info('iter' + iter + ' put mv tasks to redis ' + result);
-                            callback();
-                        });
-                    });
+            //read trip table
+            arrTT.forEach(function (item) {
+                multi.RPUSH('task', item);
+                //logger.info('iter' + iter + ' put mv tasks to redis ' + item);
+            });
+            multi.exec(function (err, result) {
+                logger.info('iter' + iter + ' put mv tasks in redis');
+                callback();
+            });
         },
         //link task
         function (callback) {
@@ -168,12 +183,14 @@ var model_Loop = function () {
                 //logger.info('link task push ' + link);
             });
             multi.exec(function (err, result) {
-                logger.info('iter' + iter + ' link task pushed ' + !err);
+                logger.info('iter' + iter + ' put link task in redis');
                 callback();
             });
         }],
         function (err, results) {
-
+            redisClient.publish('job', 'sp', function (err, result) {
+                spnr_sp.start();
+            });
         });
 }
 
@@ -191,19 +208,22 @@ redisJob.on("error", function (err) {
 redisJob.on("message", function (channel, message) {
     if (message == 'sp_done') {
         //publish mv when sp is done
+        spnr_sp.stop();
+        process.stdout.write('\n');
         logger.info('iter' + iter + ' sp done');
         redisClient.publish('job', 'mv', function (err, result) {
-            //logger.info('mv published ' + result);
+            logger.info('iter' + iter + ' mv published');
+            spnr_mv.start();           
         }); 
-    }
-    if (message == 'mv_done') {
+    }else if (message == 'mv_done') {
         //publish link update when mv is done
+        spnr_mv.stop();
+        process.stdout.write('\n');
         logger.info('iter' + iter + ' mv done');
         redisClient.publish('job', 'linkupdate', function (err, result) {
-            //logger.info('link update published ' + result);
+            logger.info('iter' + iter + ' link update published ' + result);
         });
-    }
-    if (message == 'linkupdate_done') {
+    }else if (message == 'linkupdate_done') {
         logger.info('iter' + iter + ' link update done');
         var VHT_square = 0;
         var VHT_tot = 0;
@@ -217,7 +237,7 @@ redisJob.on("message", function (channel, message) {
                         gap = 0;
                     }
                 }
-                logger.debug('iter' + iter + ' gap=' + gap + ',VHT_square=' + VHT_square + ',VHT_tot=' + VHT_tot + ',linknum=' + arrLink.length);
+                logger.info('iter' + iter + ' gap=' + gap + ',VHT_square=' + VHT_square + ',VHT_tot=' + VHT_tot + ',linknum=' + arrLink.length);
                 callback();
             },
             function (callback) {           
@@ -251,7 +271,7 @@ redisJob.on("message", function (channel, message) {
                             csv.writeToStream(fs.createWriteStream(outputFile), rcd, { headers: true })
                                 .on("finish", function () {
                                     redisClient.flushall();
-                                    logger.debug('end writing output');
+                                    logger.debug('iter' + iter + ' end writing output');
                                     callback();
                                 });
                         }],

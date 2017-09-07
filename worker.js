@@ -22,8 +22,6 @@ log4js.configure({
 });
 var logger = log4js.getLogger();
 
-logger.info(`[${process.pid}] Program worker.js start`);
-
 var timeHash = new hashMap();     //link time
 var distHash = new hashMap();     //link distance
 var typeHash = new hashMap();     //link type
@@ -43,7 +41,6 @@ var redisIP = "redis://127.0.0.1:6379";
 var appFolder = "./app";
 var paraFile = appFolder + "/parameters.json";
 var luaScript_task = appFolder + '/task.lua';
-var luaScript_pop = appFolder + '/pop.lua';
 var luaScript_msa = appFolder + '/msa.lua';
 
 var redisClient = redis.createClient({ url: redisIP }), multi;
@@ -54,7 +51,6 @@ var linkFile = appFolder + '/' + par.linkfilename;
 //load redis lua script
 var scriptManager = new Scripto(redisClient);
 scriptManager.loadFromFile('task', luaScript_task);
-scriptManager.loadFromFile('pop', luaScript_pop);
 scriptManager.loadFromFile('msa', luaScript_msa);
 
 //********csv reader********
@@ -417,7 +413,7 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, callback
                         async.series([
                             function (callback) {
                                 scriptManager.run('task', [keyValue, vol], [], function (err, result) {
-                                    //logger.debug(`[${process.pid}] ` + 'lua err=' + err + "," + result);
+                                    //logger.debug(`[${process.pid}] ` + ' iter' + iter + ' lua err=' + err + "," + result);
                                     callback();
                                 });
                             }],
@@ -433,7 +429,7 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, callback
             }
         },
         function (err) {
-            callback(null, zi + '-' + zj + ':' + tpNew + ':' + mode + ':' + iter);
+            callback(null, zi + '-' + zj + ':' + tp + ':' + mode);
         });
 }
 
@@ -445,6 +441,7 @@ redisClient.on("error", function (err) {
 //********subscriber********
 if (cluster.isMaster) {
     //create master
+    process.stdout.write('\033c');
     fs.truncate('worker_logs.log', 0, function () {
         logger.info(`[${process.pid}] clear worker log file`)
     });
@@ -481,23 +478,25 @@ if (cluster.isMaster) {
                 //test function
                 function (callback) {
                     spZone = 0;
-                    scriptManager.run('pop', [6, 'task'], [], function (err, result) {
-                        //logger.debug(`[${process.pid}]` + 'lua err=' + err + ", result=" + result);
-                        if (result != null && result != 'done') {
+                    redisClient.select(6);
+                    redisClient.lpop('task', function (err, result) {
+                        //logger.debug(`[${process.pid}]` + ' get sp task err=' + err + ", result=" + result);
+                        if (result == null) {
+                            redisClient.INCR('cnt', function (err, result) {
+                                if (result == par.numprocesses) {
+                                    logger.info(`[${process.pid}] publish sp_done`);
+                                    redisClient.publish('job_status', 'sp_done');
+                                }
+                            });
+                        } else {
                             var tsk = result.split('-'); //sp-tp-zone-SOV-ct/tl/tf
                             iter = tsk[1];
                             timeStep = tsk[2];
                             spZone = tsk[3];
                             mode = tsk[4];
                             pathType = tsk[5];   //ct,tl,tf
-                        } else {
-                            //all sp tasks finished
-                            if (result == null) {
-                                logger.debug(`[${process.pid}] publish sp_done`);
-                                redisClient.publish('job', 'sp_done');
-                            }
                         }
-                        return callback(null, result != null && result != 'done');
+                        return callback(null, result != null);
                     });
                 },
                 //create shortest path
@@ -523,7 +522,7 @@ if (cluster.isMaster) {
                 },
                 //whilst callback
                 function (err, results) {
-                    logger.info(`[${process.pid}] sp processed total of ` + cnt);
+                    logger.info(`[${process.pid}]` + ' iter' + iter + ' sp processed total of ' + cnt);
                 });
         }
         //move vehicles
@@ -536,13 +535,20 @@ if (cluster.isMaster) {
             var vol = 0;
             var pathType = '';
             var cnt = 0;
-            //logger.info(`[${process.pid}]` + '***begin moving vehicles***');
             async.during(
                 //test function
-                function (callback) {                  
-                    scriptManager.run('pop', [7, 'task'], [], function (err, result) {
-                        //logger.debug(`[${process.pid}] mv get task ` + result);
-                        if (result != null && result != 'done') {
+                function (callback) {
+                    redisClient.select(7);
+                    redisClient.lpop('task', function (err, result) {
+                        //logger.debug(`[${process.pid}]` + ' get mv task err=' + err + ", result=" + result);
+                        if (result == null) {
+                            redisClient.INCR('cnt', function (err, result) {
+                                if (result == par.numprocesses) {
+                                    logger.info(`[${process.pid}]` + ' iter'  + iter + ' publish mv_done');
+                                    redisClient.publish('job_status', 'mv_done');
+                                }
+                            });
+                        } else {
                             var tsk = result.split('-'); //mv-iter-i-j-tp-mode-vol-zone
                             iter = tsk[1];
                             zi = tsk[2];
@@ -551,44 +557,33 @@ if (cluster.isMaster) {
                             mode = tsk[5];
                             vol = tsk[6];
                             pathType = tsk[7];
-                        } else {
-                            //all mv tasks finished
-                            if (result == null) {
-                                logger.debug(`[${process.pid}] publish mv_done`);
-                                redisClient.publish('job', 'mv_done');
-                            }
+                            //logger.debug(`[${process.pid}]` + ' iter' + iter + ' mv get task ' + result);
                         }
-                        return callback(null, result != null && result != 'done');
+                        return callback(null, result != null);
                     });
                 },
                 //move vehicles
                 function (callback) {
-                    async.series([
-                        function (callback) {
-                            redisClient.select(1); //sp db
-                            //get path
-                            redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType, function (err, result) {
-                                //move vehicle
-                                logger.debug(`[${process.pid}]` + ' mv ' + tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType + " " + result);
-                                if (result == null) {
-                                    logger.info(`[${process.pid}]` + ' mv path is null ' + tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType + " " + result);
-                                    callback();
-                                } else {
-                                    mv(tp, zi, zj, pathType, mode, vol, result, iter, function (err, result) {
-                                        logger.debug(`[${process.pid}]` + ' mv finished ' + result);
-                                        cnt = cnt + 1;
-                                        callback();
-                                    });
-                                }
+                    redisClient.select(1); //sp db
+                    //get path
+                    redisClient.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType, function (err, result) {
+                        //move vehicle
+                        //logger.debug(`[${process.pid}]` + ' mv ' + tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType + " " + result);
+                        if (result == null) {
+                            //logger.debug(`[${process.pid}]` + ' mv path is null ' + tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType + " " + result);
+                            callback();
+                        } else {
+                            mv(tp, zi, zj, pathType, mode, vol, result, iter, function (err, result) {
+                                //logger.debug(`[${process.pid}]` + ' iter' + iter + ' mv finished ' + result);
+                                cnt = cnt + 1;
+                                callback();
                             });
-                        }],
-                        function (err, results) {
-                            return callback(null, results);
-                        });
+                        }
+                    });
                 },
                 //whilst callback
                 function (err, results) {
-                    logger.info(`[${process.pid}] mv processed total of ` + cnt);
+                    logger.info(`[${process.pid}] ` + ' iter' + iter + ' mv processed total of ' + cnt);
                 });
         }
         //update link volume and time
@@ -599,19 +594,21 @@ if (cluster.isMaster) {
             async.during(
                 //test function
                 function (callback) {
-                    scriptManager.run('pop', [8, 'task'], [], function (err, result) {
+                    redisClient.select(8);
+                    redisClient.lpop('task', function (err, result) {
                         //logger.debug(`[${process.pid}] link update get task ` + result);
-                        if (result != null && result != 'done') {
-                            linktp = result.split(':')[0] + ':' + result.split(':')[1];
-                            iter = result.split(':')[2];    
+                        if (result == null) {
+                            redisClient.INCR('cnt', function (err, result) {
+                                if (result == par.numprocesses) {
+                                    logger.info(`[${process.pid}]` + ' iter' + iter + ' publish linkupdate_done');
+                                    redisClient.publish('job_status', 'linkupdate_done');
+                                }
+                            });
                         } else {
-                            //all link update tasks finished
-                            if (result == null) {
-                                logger.debug(`[${process.pid}] publish linkupdate_done`);
-                                redisClient.publish('job', 'linkupdate_done');
-                            }
+                            linktp = result.split(':')[0] + ':' + result.split(':')[1];
+                            iter = result.split(':')[2]; 
                         }
-                        return callback(null, result != null && result != 'done');
+                        return callback(null, result != null);
                     });
                 },
                 function (callback) {
@@ -667,7 +664,7 @@ if (cluster.isMaster) {
                 },
                 //whilst callback
                 function (err) {
-                    logger.info(`[${process.pid}] link update processed total of ` + cnt);
+                    logger.info(`[${process.pid}]` + ' iter' + iter + ' link update processed total of ' + cnt);
                 });
         }
     });
