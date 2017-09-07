@@ -101,25 +101,6 @@ async.series([
                 callback();
             });
         stream.pipe(csvStream);
-    },
-    //read trip table
-    function (callback) {
-        var stream = fs.createReadStream(appFolder + "/" + par.triptablefilename);
-        spnr_tt_read.start()
-        var csvStream = csv({ headers: true })
-            .on("data", function (data) {
-                if (parseInt(data['TP']) <= par.timesteps) {
-                    arrTT.push('mv-' + iter + '-' + data['I'] + '-' + data['J'] + '-' + data['TP'] + '-' + data['Mode'] + '-' + data['Vol'] + '-ct');
-                    //logger.debug('mv-' + iter + '-' + data['I'] + '-' + data['J'] + '-' + data['TP'] + '-' + data['Mode'] + '-' + data['Vol'] + '-ct');
-                }
-            })
-            .on("end", function (result) {
-                spnr_tt_read.stop();
-                process.stdout.write('\n');
-                logger.info("read trip table total of " + result + " zone pairs");
-                callback();
-            });
-        stream.pipe(csvStream);
     }],
     function () {
         eventEmitter.emit('next_iter');
