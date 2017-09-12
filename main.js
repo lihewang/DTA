@@ -1,6 +1,6 @@
 //main model controls
 
-// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.VHT
+// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.VHT 5.trip table
 //  6.shortest path task 7.move vehicle task 8.link task
 
 var redis = require('redis');
@@ -12,7 +12,7 @@ var hashMap = require('hashmap');
 var math = require('mathjs');
 var events = require('events');
 var log4js = require('log4js');
-var spinner = require('cli-spinner').Spinner;
+var progressBar = require('progress');
 
 log4js.configure({
     appenders: {
@@ -28,10 +28,10 @@ process.stdout.write('\033c');  //clear console
 
 //clear log file
 fs.truncate('main.log', 0, function () {
-    logger.info(`[${process.pid}] clear main log file`)
+    logger.info('clear main log file');
 });
 fs.truncate('worker.log', 0, function () {
-    logger.info(`[${process.pid}] clear worker log file`)
+    logger.info('clear worker log file');
 });
 
 //Desktop deployment
@@ -42,7 +42,6 @@ var outputFile = "./output/vol.csv"
 var redisClient = redis.createClient({ url: redisIP }), multi;
 var redisJob = redis.createClient({ url: redisIP }), multi;
 var arrLink = [];
-var arrTT = [];
 var par = null;
 var timeFFHash = new hashMap();
 var alphaHash = new hashMap();
@@ -50,18 +49,15 @@ var betaHash = new hashMap();
 var capHash = new hashMap();
 var iter = 1;
 var gap = 1;
+var spmvNum = 0;
+var linkupdateNum = 0;
+var refresh = true;
 var eventEmitter = new events.EventEmitter();
-
-//progress spinner
-var spnr_sp = new spinner('building shortest path.. %s');
-spnr_sp.setSpinnerString('|/-\\');
-var spnr_tt_read = new spinner('reading trip table file.. %s');
-spnr_tt_read.setSpinnerString('|/-\\');
-var spnr_mv = new spinner('moving vehicles.. %s');
-spnr_mv.setSpinnerString('|/-\\');
+var bar = new progressBar('[:bar] [:percent]', {width: 80, total: 100 });
 
 //subscribe to job channel
 redisJob.subscribe("job_status");
+redisClient.flushall();
 
 //read in files
 async.series([   
@@ -69,13 +65,7 @@ async.series([
         //read parameters
         par = JSON.parse(fs.readFileSync(paraFile));
         logger.info("read parameters");
-        //clear vol db
-        multi = redisClient.multi();
-        multi.select(2);  
-        multi.flushdb(); 
-        multi.exec(function (err, result) {   
-            callback();
-        });
+        callback();
     },
     //read link file
     function (callback) {
@@ -101,21 +91,51 @@ async.series([
                 callback();
             });
         stream.pipe(csvStream);
+    },
+    //read trip table
+    function (callback) {
+        var stream = fs.createReadStream(appFolder + "/" + par.triptablefilename);
+        var key = '';
+        var cnt = 0;
+        var tot = parseInt(par.zonenum) * parseInt(par.zonenum) * 96 * 2;
+        logger.info('reading trip table file');
+        bar.update(0);
+        redisClient.select(5);
+        var csvStream = csv({ headers: true })
+            .on("data", function (data) {
+                if (parseInt(data['TP']) <= par.timesteps) {
+                    key = data['I'] + ':' + data['TP'] + ':' + data['Mode'] + ':ct';
+                    redisClient.get(key, function (err, result) {
+                        if (result == null) {
+                            redisClient.set(key, data['J'] + ':' + data['Vol']);
+                        } else {
+                            redisClient.set(key, result + ',' + data['J'] + ':' + data['Vol']);
+                        }
+                    });
+                }
+                cnt = cnt + 1;
+                bar.update(cnt / tot);
+            })
+            .on("end", function (result) {
+                bar.update(1);
+                logger.info("read trip tabel total of " + result + " zone pairs");
+                callback(null, result);
+            });
+        stream.pipe(csvStream);
     }],
-    function () {
+    function () {        
         eventEmitter.emit('next_iter');
     });
 
 //Loop iterations
 var model_Loop = function () {
+    refresh = true;
+    spmvNum = 0;
     async.series([
         //create shortest paths for all time steps and modes               
         function (callback) {
             //create job queue in redis
             multi = redisClient.multi();
-            //flush sp db
-            multi.select(1);
-            multi.flushdb();
             multi.select(6);
             multi.flushdb();
             par.modes.forEach(function (md) {   //loop modes
@@ -123,6 +143,7 @@ var model_Loop = function () {
                     //zones
                     for (var j = 1; j <= par.zonenum; j++) {
                         multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + j + '-' + md + '-ct');
+                        spmvNum = spmvNum + 1;
                     }
                     //decision point
                     par.dcpnt.forEach(function (dcp) {
@@ -130,32 +151,19 @@ var model_Loop = function () {
                         var t2 = ['tl', 'tf'];
                         t2.forEach(function (t) {
                             multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + j + '-' + md + '-' + t);
+                            spmvNum = spmvNum + 1;
                         });
                     });
                 }
             });
             multi.exec(function (err, result) {
-                logger.info('iter' + iter + ' put sp tasks in redis');
-                callback();
-            });
-        },
-        //put mv to redis
-        function (callback) {           
-            multi = redisClient.multi();
-            multi.select(7);
-            multi.flushdb();
-            //read trip table
-            arrTT.forEach(function (item) {
-                multi.RPUSH('task', item);
-                //logger.info('iter' + iter + ' put mv tasks to redis ' + item);
-            });
-            multi.exec(function (err, result) {
-                logger.info('iter' + iter + ' put mv tasks in redis');
+                logger.info('iter' + iter + ' put ' + spmvNum + ' sp tasks in redis');
                 callback();
             });
         },
         //link task
         function (callback) {
+            linkupdateNum = arrLink.length;
             multi = redisClient.multi();
             multi.select(8);
             multi.flushdb();
@@ -169,8 +177,9 @@ var model_Loop = function () {
             });
         }],
         function (err, results) {
-            redisClient.publish('job', 'sp', function (err, result) {
-                spnr_sp.start();
+            redisClient.publish('job', 'sp_mv', function (err, result) {
+                logger.info('iter' + iter + ' running path building and moving vehicles');
+                bar.update(0);
             });
         });
 }
@@ -186,25 +195,33 @@ redisJob.on("error", function (err) {
     logger.debug('redis error ' + err);
 });
 
+
 redisJob.on("message", function (channel, message) {
-    if (message == 'sp_done') {
-        //publish mv when sp is done
-        spnr_sp.stop();
-        process.stdout.write('\n');
-        logger.info('iter' + iter + ' sp done');
-        redisClient.publish('job', 'mv', function (err, result) {
-            logger.info('iter' + iter + ' mv published');
-            spnr_mv.start();           
-        }); 
-    }else if (message == 'mv_done') {
-        //publish link update when mv is done
-        spnr_mv.stop();
-        process.stdout.write('\n');
-        logger.info('iter' + iter + ' mv done');
+    if (message.split(':')[0] == 'bar_tick') {
+        redisClient.select(message.split(':')[1]);
+        if (message.split(':')[1] == '6') { //sp_mv
+            var tot = spmvNum;
+        } else if (message.split(':')[1] == '8') {  //link update
+            var tot = parseInt(linkupdateNum);
+        }
+        redisClient.LLEN('task', function (err, result) {
+            var v = 1 - parseInt(result) / tot;
+            if (refresh) {
+                if (v == 1) {
+                    refresh = false;
+                }
+                bar.update(v);
+            }
+        });       
+    } else if (message == 'linkvolredis') {
+        logger.info('iter' + iter + ' writting link volume to redis');
+    }else if (message == 'sp_mv_done') {
         redisClient.publish('job', 'linkupdate', function (err, result) {
-            logger.info('iter' + iter + ' link update published ' + result);
-        });
-    }else if (message == 'linkupdate_done') {
+            logger.info('iter' + iter + ' running link attributes update');   
+            bar.update(0);
+            refresh = true;
+        }); 
+    } else if (message == 'linkupdate_done') {
         logger.info('iter' + iter + ' link update done');
         var VHT_square = 0;
         var VHT_tot = 0;
@@ -224,8 +241,8 @@ redisJob.on("message", function (channel, message) {
             function (callback) {           
                 //check convergence
                 if (iter < par.maxiter && gap > par.gap) {
-                    eventEmitter.emit('next_iter');
                     iter = iter + 1;
+                    eventEmitter.emit('next_iter');
                     callback();
                 } else {
                     //write csv file                  
@@ -237,10 +254,13 @@ redisJob.on("message", function (channel, message) {
                             redisClient.keys('*', function (err, results) {
                                 multi = redisClient.multi();
                                 results.forEach(function (key) {
-                                    var arrKey = key.split(":");
-                                    multi.get(key, function (err, result) {
-                                        rcd.push([arrKey[3], arrKey[0], arrKey[1], arrKey[2], result]);
-                                    })
+                                    var arrKey = key.split(':');
+                                    if (arrKey != 'cntNode' && parseInt(arrKey[3]) == iter) {
+                                        var arrKey = key.split(":");
+                                        multi.get(key, function (err, result) {
+                                            rcd.push([arrKey[3], arrKey[0], arrKey[1], arrKey[2], result]);
+                                        })
+                                    }
                                 })
                                 multi.exec(function () {
                                     callback();

@@ -33,6 +33,8 @@ var alphaHash = new hashMap();
 var betaHash = new hashMap();
 var capHash = new hashMap();
 var pathHash = new hashMap();       //paths
+var volHash = new hashMap();        //volume
+var ttHash = new hashMap();         //trip table
 var arrLink = [];
 var spZones = [];                   //sp zones processed by the worker
 var arrTT = [];
@@ -106,22 +108,6 @@ var rdcsv = function Readcsv(callback) {
         });
     stream.pipe(csvStream);
 }
-
-//read trip table
-var rdtt = function Readtt(callback) {
-    var stream = fs.createReadStream(appFolder + "/" + par.triptablefilename);
-    var csvStream = csv({ headers: true })
-        .on("data", function (data) {
-            if (parseInt(data['TP']) <= par.timesteps) {
-                arrTT.push(data['I'] + '-' + data['J'] + '-' + data['TP'] + '-' + data['Mode'] + '-' + data['Vol'] + '-ct');
-                //logger.debug(data['I'] + '-' + data['J'] + '-' + data['TP'] + '-' + data['Mode'] + '-' + data['Vol'] + '-ct');
-            }
-        })
-        .on("end", function (result) { 
-            callback(null, result);
-        });
-    stream.pipe(csvStream);
-}
 //********ban links********
 var ban = function banLinks(mode, pType, spZone, callback) {
     nodeHash.copy(nodeHash_all);
@@ -175,26 +161,6 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, callback
                 }
             }
             callback();
-        },
-        function (callback) {
-            //read in congested time
-            if (iter >= 2) {
-                timeHash.clear();
-                multi = redisClient.multi();
-                multi.select(3);
-                arrLink.forEach(function (link) {
-                    multi.get(link, function (err, result) {
-                        timeHash.set(link, result);
-                    });
-                });
-                multi.exec(function () {
-                    //console.log('arrLink size=' + arrLink.length + ' zone=' + zone + ' tp=' + tp + 
-                    //' 7-4cgTime=' + timeHash.get('7-4:1') + ' 7-5cgTime=' + timeHash.get('7-5:1'));   
-                    callback();
-                });
-            } else {
-                callback();
-            }
         }],
         //apply turn penalty
 
@@ -427,20 +393,24 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, callback
                     async.series([
                         function (callback) {
                             tpNew = parseInt(tp) + math.floor(totTime / 15);
+                            if (tpNew > parseInt(par.timesteps)) {
+                                tpNew = parseInt(par.timesteps);
+                            }
                             var linkID = arrPath[j] + '-' + arrPath[j + 1] + ':' + tpNew;
-                            totTime = totTime + parseFloat(timeHash.get(linkID.toString()));
+                            totTime = totTime + parseFloat(timeHash.get(linkID));
                             //logger.debug(`[${process.pid}] ` + linkID + ' time=' + parseFloat(timeHash.get(linkID.toString())) + ',iter=' + iter);
                             keyValue = arrPath[j] + '-' + arrPath[j + 1] + ':' + tpNew + ':' + mode + ':' + iter;
                             //logger.debug(`[${process.pid}] ` + keyValue + ',tp=' + tp + ',totTime=' + totTime + ',tpNew=' + tpNew);
                             callback();
                         },
                         function (callback) {
-                            redisClient.select(2);
-                            redisClient.INCRBYFLOAT(keyValue, vol, function (err, result) {
-                                //logger.debug(`[${process.pid}] ` + ' iter' + iter + ' add link vol ' + err + ', ' + result);
-                                callback();
-                            });
-                            //callback();
+                            //save to array
+                            if (volHash.has(keyValue)) {
+                                volHash.set(keyValue, volHash.get(keyValue) + vol);
+                            } else {
+                                volHash.set(keyValue, vol);
+                            }
+                            callback();
                         }],
                         function (err, results) {
                             //logger.debug(`[${process.pid}]` + ' non decision point loop end ' + j);
@@ -464,6 +434,8 @@ redisClient.on("error", function (err) {
 if (cluster.isMaster) {
     //create master
     process.stdout.write('\033c');
+    //clear redis db
+    redisClient.FLUSHALL;
     fs.truncate('worker.log', 0, function () {
         logger.info(`[${process.pid}] clear worker log file`)
     });
@@ -481,23 +453,44 @@ if (cluster.isMaster) {
     rdcsv(function (err, result) {
         logger.info(`[${process.pid}] read network ` + result + ' links');
     });
-    //read trip table
-    rdtt(function (err, result) {
-        logger.info(`[${process.pid}] read trip table ` + result + ' zone pairs');
-    });
+    
     redisJob.subscribe("job");
 
     //process jobs
     redisJob.on("message", function (channel, message) {
-        //logger.info(`[${process.pid}] Get job message ` + message);    //job message is sp or mv
-        //sp
-        if (message == 'sp') { 
+        //sp and mv
+        if (message == 'sp_mv') {
+            spZones = [];
             var spZone = 0;
             var timeStep = 0;
             var mode = '';
             var pathType = '';  //ct,tl,tf
             var hasTask = true;
             var cnt = 0;
+            //update time
+            if (iter >= 2) {
+                timeHash.clear();
+                redisClient.select(3);
+                redisClient.mget(arrLink, function (err, result) {
+                    for (var i = 0; i < arrLink.length; i++) {
+                        timeHash.set(arrLink[i], result[i]);
+                    }
+                });
+                /*
+                multi = redisClient.multi();
+                multi.select(3);
+                arrLink.forEach(function (link) {
+                    multi.get(link, function (err, result) {
+                        timeHash.set(link, result);
+                    });
+                });
+                multi.exec(function () {
+                    //console.log('arrLink size=' + arrLink.length + ' zone=' + zone + ' tp=' + tp + 
+                    //' 7-4cgTime=' + timeHash.get('7-4:1') + ' 7-5cgTime=' + timeHash.get('7-5:1'));   
+                    callback();
+                });*/
+            } 
+            var tot = 0;
             async.during(           //loop until jobs are done
                 //test function
                 function (callback) {
@@ -509,21 +502,23 @@ if (cluster.isMaster) {
                             redisClient.INCR('cnt', function (err, result) {
                                 if (result == par.numprocesses) {
                                     logger.info(`[${process.pid}]` + ' iter' + iter + ' publish sp_done');
-                                    redisClient.publish('job_status', 'sp_done');
+                                    redisClient.publish('job', 'linkvolredis');
+                                    redisClient.publish('job_status', 'linkvolredis');
                                 }
                             });
                         } else {
-                            var tsk = result.split('-'); //sp-tp-zone-SOV-ct/tl/tf
+                            var tsk = result.split('-'); //sp-iter-tp-zone-SOV-ct/tl/tf
                             iter = tsk[1];
                             timeStep = tsk[2];
                             spZone = tsk[3];
                             mode = tsk[4];
-                            pathType = tsk[5];   //ct,tl,tf
+                            pathType = tsk[5];   //ct,tl,tf                           
                         }
+                        redisClient.publish('job_status', 'bar_tick:6');
                         return callback(null, result != null);
                     });
                 },
-                //create shortest path
+                //create shortest path and move vehicles
                 function (callback) {
                     async.series([
                         function (callback) {
@@ -534,13 +529,34 @@ if (cluster.isMaster) {
                             });
                         },
                         function (callback) {
-                            sp(spZone, par.zonenum, timeStep, mode, pathType, iter, function (err, result) {
-                                //logger.info(`[${process.pid}] ` + result);
-                                callback(null, result);
+                            sp(spZone, par.zonenum, timeStep, mode, pathType, iter, function (err, result) {                               
+                                //tot = 0; 
+                                var mvTasks = [];
+                                redisClient.select(5);
+                                redisClient.get(spZone + ':' + timeStep + ':' + mode + ':' + pathType, function (err, result) {
+                                    if (result != null) {
+                                        mvTasks = result.split(',');
+                                        mvTasks.forEach(function (item) {
+                                            var tsk = item.split(':');   //I-J-tp-mode-vol-ct
+                                            var zj = tsk[0];
+                                            var vol = tsk[1];
+                                            //vehicle trips from this zone
+                                            var path = pathHash.get(timeStep + ":" + spZone + "-" + zj + ":" + mode + ":" + pathType);
+                                            mv(timeStep, spZone, zj, pathType, mode, parseFloat(vol), path, iter, function (err, result) {
+                                                //tot = tot + 1;
+                                                //logger.info(`[${process.pid}] ` + ' zone ' + spZone + ' moved ' + tot);
+                                            });
+                                        });                                       
+                                    } 
+                                    callback(null, result);
+                                });
+                                //mvTasks = ttHash.get(spZone + ':' + timeStep + ':' + mode + ':' + pathType);                              
                             })
                         }],
                         function () {
+                            pathHash.clear();
                             cnt = cnt + 1;
+                            //logger.info(`[${process.pid}] ` + ' spZone ' + spZone + ' tp ' + timeStep + ' mode ' + mode + ' total moved pair ' + tot);
                             callback();
                         });
                 },
@@ -549,49 +565,28 @@ if (cluster.isMaster) {
                     logger.info(`[${process.pid}]` + ' iter' + iter + ' sp processed total of ' + cnt);
                 });
         }
-        //move vehicles
-        else if (message == 'mv') {
-            var zi = 0;
-            var zj = 0;
-            var tp = 0;
-            var mode = '';
-            var vol = 0;
-            var pathType = '';
+        //write vol to redis
+        else if (message == 'linkvolredis') {
+            redisClient.select(2);
             var cnt = 0;
-            var tot = 0;
-            //async.during(
-                //test function
-                //function (callback) {
-            //logger.debug(`[${process.pid}] ` + " sp zones in this node " + spZones.length);
-            redisClient.select(7);
-            arrTT.forEach(function (item) {
-                tot = tot + 1;
-                var tsk = item.split('-');   //I-J-tp-mode-vol-ct
-                //spZones : zone + ':' + tp + ':' + mode + ':' + pathType
-                if (spZones.indexOf(tsk[0] + ':' + tsk[2] + ':' + tsk[3] + ':' + tsk[5]) > -1) {
-                    zi = tsk[0];
-                    zj = tsk[1];
-                    tp = tsk[2];
-                    mode = tsk[3];
-                    vol = tsk[4];
-                    pathType = tsk[5];
+            var tot = volHash.count();
+            volHash.forEach(function (value, key) {
+                redisClient.INCRBYFLOAT(key, math.round(value,3), function (err, result) {
+                    //logger.debug(`[${process.pid}] ` + ' iter' + iter + ' add link vol ' + key + ', ' + value);
                     cnt = cnt + 1;
-                    var path = pathHash.get(tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType);
-                    if (path == null) {logger.debug(`[${process.pid}] ` + ' path is null ' + tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType);}
-                    
-                    mv(tp, zi, zj, pathType, mode, vol, path, iter, function (err, result) {
-                        //if (zi == '93') {logger.debug(`[${process.pid}]` + ' iter' + iter + ' mv finished ' + result);} 
-                        redisClient.INCR('cnt', function (err, result) {
-                            //logger.info(`[${process.pid}]` + ' iter' + iter + ' ' + tp + ":" + zi + "-" + zj + ":" + mode + ":" + pathType + ' incr ' + result);
-                            if (parseInt(result) == arrTT.length) {
-                                logger.info(`[${process.pid}]` + ' iter' + iter + ' publish mv_done');
-                                redisClient.publish('job_status', 'mv_done');
+                    //logger.debug(`[${process.pid}] ` + ' cnt ' + cnt + ' volHash ' + tot);
+                    if (cnt == tot) {
+                        redisClient.INCR('cntNode', function (err, result) {
+                            logger.info(`[${process.pid}] ` + ' iter' + iter + ' node ' + result + ' write link vol to redis');
+                            if (parseInt(result) == par.numprocesses) {
+                                redisClient.set('cntNode', 0);
+                                logger.info(`[${process.pid}]` + ' iter' + iter + ' publish sp_mv_done');
+                                redisClient.publish('job_status', 'sp_mv_done');
                             }
                         });
-                    });
-                }
-            });
-            logger.info(`[${process.pid}]` + ' iter' + iter + ' loop all mv task ' + cnt + ' of ' + tot); 
+                    }
+                });
+            });   
         }
         //update link volume and time
         else if (message = "linkupdate") {
@@ -617,6 +612,7 @@ if (cluster.isMaster) {
                         }
                         return callback(null, result != null);
                     });
+                    redisClient.publish('job_status', 'bar_tick:8');
                 },
                 function (callback) {
                     var vol = 0;
@@ -651,8 +647,8 @@ if (cluster.isMaster) {
                             var cgTime = timeFFHash.get(linkID) * (1 + alphaHash.get(linkID) * math.pow(vol * 4 / capHash.get(linkID), betaHash.get(linkID)));
                             var vht = vol * cgTime;
                             //if (vol > 0) {
-                                //logger.debug('iter=' + iter + ', link=' + linkID + ', tp=' + linktp.split(':')[1] + ', VHT=' + math.round(vht, 2) +
-                                //    ', vol=' + parseFloat(vol) + ', cgtime=' + math.round(cgTime, 3));
+                            //    logger.debug('iter=' + iter + ', link=' + linkID + ', tp=' + linktp.split(':')[1] + ', VHT=' + math.round(vht, 2) +
+                            //        ', vol=' + parseFloat(vol) + ', cgtime=' + math.round(cgTime, 3));
                             //}
                             //set congested time to redis
                             multi = redisClient.multi();
