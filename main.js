@@ -1,6 +1,6 @@
 //main model controls
 
-// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.VHT 5.trip table
+// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.VHT 5.trip table 
 //  6.shortest path task 7.move vehicle task 8.link task
 
 var redis = require('redis');
@@ -94,11 +94,12 @@ async.series([
     },
     //read trip table
     function (callback) {
+        logger.info('reading trip table file');
         var stream = fs.createReadStream(appFolder + "/" + par.triptablefilename);
         var key = '';
         var cnt = 0;
-        var tot = parseInt(par.zonenum) * parseInt(par.zonenum) * 96 * 2;
-        logger.info('reading trip table file');
+        var tot = 0;
+        tot = math.pow(par.zonenum, 2) * 96 * par.modes.length
         bar.update(0);
         redisClient.select(5);
         var csvStream = csv({ headers: true })
@@ -228,15 +229,35 @@ redisJob.on("message", function (channel, message) {
         async.series([
             function (callback) {
                 //calculate gap
-                if (iter >= 2) {
-                    if (VHT_tot != 0) {
-                        gap = math.pow(VHT_square / arrLink.length, 0.5) * (arrLink.length / (VHT_tot));
-                    } else {
-                        gap = 0;
-                    }
-                }
-                logger.info('iter' + iter + ' gap=' + gap + ',VHT_square=' + VHT_square + ',VHT_tot=' + VHT_tot + ',linknum=' + arrLink.length);
-                callback();
+                if (iter > 1) {
+                    var cntVHT = 0;
+                    redisClient.select(4);
+                    redisClient.keys('*', function (err, results) {
+                        multi = redisClient.multi();
+                        results.forEach(function (key) {
+                            multi.get(key, function (err, result) {
+                                var r = result.split(',');
+                                VHT_square = VHT_square + math.pow(parseFloat(r[2]), 2);
+                                VHT_tot = VHT_tot + parseFloat(r[1]);
+                                if (parseFloat(r[0]) != 0 || parseFloat(r[1]) != 0) {
+                                    logger.debug('iter' + iter + ' link ' + key + ' vht ' + r);
+                                    cntVHT = cntVHT + 1;
+                                }
+                            })
+                        })
+                        multi.exec(function () {
+                            if (VHT_tot != 0) {
+                                gap = math.pow(VHT_square / cntVHT, 0.5) * cntVHT / VHT_tot;
+                            } else {
+                                gap = 0;
+                            }
+                            logger.info('iter' + iter + ' gap=' + math.round(gap, 2) + ',VHT_square=' + math.round(VHT_square, 2) + ',VHT_tot=' + math.round(VHT_tot, 2) + ',linknum=' + cntVHT);
+                            callback();
+                        });
+                    });
+                } else {
+                    callback();
+                }   
             },
             function (callback) {           
                 //check convergence
@@ -267,12 +288,11 @@ redisJob.on("message", function (channel, message) {
                                 });
                             });
                         },
-                        function (callback) {
-                            //console.log(rcd);           
+                        function (callback) {       
                             csv.writeToStream(fs.createWriteStream(outputFile), rcd, { headers: true })
                                 .on("finish", function () {
                                     redisClient.flushall();
-                                    logger.debug('iter' + iter + ' end writing output');
+                                    logger.info('iter' + iter + ' end writing output');
                                     callback();
                                 });
                         }],

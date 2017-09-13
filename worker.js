@@ -570,22 +570,32 @@ if (cluster.isMaster) {
             redisClient.select(2);
             var cnt = 0;
             var tot = volHash.count();
-            volHash.forEach(function (value, key) {
-                redisClient.INCRBYFLOAT(key, math.round(value,3), function (err, result) {
-                    //logger.debug(`[${process.pid}] ` + ' iter' + iter + ' add link vol ' + key + ', ' + value);
-                    cnt = cnt + 1;
-                    //logger.debug(`[${process.pid}] ` + ' cnt ' + cnt + ' volHash ' + tot);
-                    if (cnt == tot) {
-                        redisClient.INCR('cntNode', function (err, result) {
-                            logger.info(`[${process.pid}] ` + ' iter' + iter + ' node ' + result + ' write link vol to redis');
-                            if (parseInt(result) == par.numprocesses) {
-                                redisClient.set('cntNode', 0);
-                                logger.info(`[${process.pid}]` + ' iter' + iter + ' publish sp_mv_done');
-                                redisClient.publish('job_status', 'sp_mv_done');
-                            }
-                        });
+            if (tot == 0) {
+                redisClient.INCR('cntNode', function (err, result) {
+                    logger.info(`[${process.pid}] ` + ' iter' + iter + ' node ' + result + ' no link vol written to redis');
+                    if (parseInt(result) == par.numprocesses) {
+                        redisClient.set('cntNode', 0);
+                        logger.info(`[${process.pid}]` + ' iter' + iter + ' publish sp_mv_done');
+                        redisClient.publish('job_status', 'sp_mv_done');
                     }
                 });
+            }
+            volHash.forEach(function (value, key) {
+                cnt = cnt + 1;
+                if (parseInt(key.split(':')[3]) == iter) { 
+                    redisClient.INCRBYFLOAT(key, math.round(value, 3), function (err, result) {
+                        if (cnt == tot) {
+                            redisClient.INCR('cntNode', function (err, result) {
+                                logger.info(`[${process.pid}] ` + ' iter' + iter + ' node ' + result + ' write link vol to redis');
+                                if (parseInt(result) == par.numprocesses) {
+                                    redisClient.set('cntNode', 0);
+                                    logger.info(`[${process.pid}]` + ' iter' + iter + ' publish sp_mv_done');
+                                    redisClient.publish('job_status', 'sp_mv_done');
+                                }
+                            });
+                        }
+                    });
+                }
             });   
         }
         //update link volume and time
@@ -620,20 +630,21 @@ if (cluster.isMaster) {
                     async.series([
                         //MSA Volume
                         function (callback) {
-                            async.every(par.modes, function (md, callback) {
-                                    if (iter >= 2) {           
-                                        var lastIter = iter - 1;
-                                        var key1 = linktp + ":" + md + ":" + iter;
-                                        var key2 = linktp + ":" + md + ":" + lastIter;
-                                        //logger.debug(`[${process.pid}] ` + key1 + ", " + key2);
-                                        scriptManager.run('msa', [key1, key2, iter], [], function (err, result) {
-                                            //logger.debug('lua err=' + err + ", result=" + result);
-                                            vol = vol + parseFloat(result.split(',')[2]);
-                                            callback(null, true);
-                                        });
-                                    } else {
+                            async.every(par.modes, function (md, callback) {         
+                                    var lastIter = iter - 1;
+                                    var key1 = linktp + ":" + md + ":" + iter;
+                                    var key2 = linktp + ":" + md + ":" + lastIter;
+                                    //logger.debug(`[${process.pid}] ` + key1 + ", " + key2);
+                                    scriptManager.run('msa', [key1, key2, iter], [], function (err, result) { //return v_current, v_previous, v_msa
+                                        if (err) {
+                                            logger.debug('mas lua err=' + err + ", result=" + result);
+                                        }
+                                        vol = vol + parseFloat(result.split(',')[2]);
+                                        if (vol > 0) {
+                                            logger.debug(`[${process.pid}] ` + ' iter=' + iter + ' link ' + key1 + ' MSA result ' + result);
+                                        }
                                         callback(null, true);
-                                    }
+                                    });   
                                 },
                                 function (err, result) {
                                     callback();
@@ -645,20 +656,37 @@ if (cluster.isMaster) {
                         function (callback) {
                             var linkID = linktp.split(':')[0];
                             var cgTime = timeFFHash.get(linkID) * (1 + alphaHash.get(linkID) * math.pow(vol * 4 / capHash.get(linkID), betaHash.get(linkID)));
-                            var vht = vol * cgTime;
-                            //if (vol > 0) {
-                            //    logger.debug('iter=' + iter + ', link=' + linkID + ', tp=' + linktp.split(':')[1] + ', VHT=' + math.round(vht, 2) +
-                            //        ', vol=' + parseFloat(vol) + ', cgtime=' + math.round(cgTime, 3));
-                            //}
+                            var vht = vol * cgTime / 60;
+                            if (vol > 0) {
+                                logger.debug(`[${process.pid}] ` + 'iter=' + iter + ', link=' + linkID + ', tp=' + linktp.split(':')[1] + ', VHT=' + math.round(vht, 2) +
+                                    ', vol=' + parseFloat(vol) + ', cgtime=' + math.round(cgTime, 3));
+                            }
                             //set congested time to redis
                             multi = redisClient.multi();
                             multi.select(3);
                             multi.set(linktp, cgTime);
-                            multi.select(4);
-                            multi.set(linktp, vht);
                             multi.exec(function (err, result) {
-                                callback();     
-                            });     
+                            });
+                            //VHT
+                            redisClient.select(4);
+                            redisClient.get(linktp, function (err, result) {
+                                if (result == null) {   //current vht, previous vht, vht diff
+                                    redisClient.set(linktp, vht + ',0,0', function (err, result) {
+                                        //logger.debug(`[${process.pid}]` + 'iter=' + iter + ' err ' + err + ' result ' + result);
+                                        callback();  
+                                    });
+                                    
+                                } else {
+                                    var v = result;
+                                    var vht_pre = parseFloat(v.split(',')[0]);
+                                    redisClient.set(linktp, vht + ',' + vht_pre + ',' + (vht - vht_pre), function (err, result) {
+                                        //logger.debug(`[${process.pid}]` + 'iter=' + iter + ' linktp ' + linktp + ' vht ' + vht + ',' +
+                                        //    ' previous ' + v + ' ' + (vht - parseFloat(v.split(',')[0])));
+                                        callback(); 
+                                    });      
+                                }       
+                            });
+                             
                         }],
                         function (err, result) {
                             cnt = cnt + 1;
