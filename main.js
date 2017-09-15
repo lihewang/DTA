@@ -1,7 +1,7 @@
 //main model controls
 
 // redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.VHT 5.trip table 
-//  6.shortest path task 7.move vehicle task 8.link task
+//  6.shortest path task for TAZs 7.sp task for decision points 8.link task 9.iter
 
 var redis = require('redis');
 var request = require('request');
@@ -53,14 +53,25 @@ var spmvNum = 0;
 var linkupdateNum = 0;
 var refresh = true;
 var eventEmitter = new events.EventEmitter();
-var bar = new progressBar('[:bar] [:percent]', {width: 80, total: 100 });
+var bar = new progressBar('[:bar] [:percent]', { width: 80, total: 100 });
+
+//set global iter
+redisClient.select(9);
+redisClient.set('iter', iter);
 
 //subscribe to job channel
 redisJob.subscribe("job_status");
 redisClient.flushall();
 
 //read in files
-async.series([   
+async.series([  
+    function (callback) {
+        //set global iter
+        redisClient.select(9);
+        redisClient.set('iter', iter, function (err, result) {
+            callback();
+        });
+    },
     function (callback) { 
         //read parameters
         par = JSON.parse(fs.readFileSync(paraFile));
@@ -100,27 +111,35 @@ async.series([
         var cnt = 0;
         var tot = 0;
         tot = math.pow(par.zonenum, 2) * 96 * par.modes.length
+        var TT = new hashMap();
         bar.update(0);
-        redisClient.select(5);
+        multi = redisClient.multi();
+        multi.select(5);
         var csvStream = csv({ headers: true })
             .on("data", function (data) {
                 if (parseInt(data['TP']) <= par.timesteps) {
                     key = data['I'] + ':' + data['TP'] + ':' + data['Mode'] + ':ct';
-                    redisClient.get(key, function (err, result) {
-                        if (result == null) {
-                            redisClient.set(key, data['J'] + ':' + data['Vol']);
-                        } else {
-                            redisClient.set(key, result + ',' + data['J'] + ':' + data['Vol']);
-                        }
-                    });
+                    var v = TT.get(key);
+                    if (v == null) {
+                        TT.set(key, data['J'] + ':' + data['Vol']);
+                    } else {
+                        TT.set(key, v + ',' + data['J'] + ':' + data['Vol']);
+                    }
                 }
                 cnt = cnt + 1;
                 bar.update(cnt / tot);
             })
             .on("end", function (result) {
                 bar.update(1);
-                logger.info("read trip tabel total of " + result + " zone pairs");
-                callback(null, result);
+                logger.info('writing trip table to redis');
+                TT.forEach(function (value, key) {
+                     multi.SET(key, value, function (err, result) {
+                     });
+                });
+                multi.exec(function (err, result) {
+                    logger.info("read trip tabel total of " + cnt + " records");
+                    callback(null, result);
+                });    
             });
         stream.pipe(csvStream);
     }],
@@ -139,20 +158,24 @@ var model_Loop = function () {
             multi = redisClient.multi();
             multi.select(6);
             multi.flushdb();
+            multi.select(7);
+            multi.flushdb();
             par.modes.forEach(function (md) {   //loop modes
                 for (var i = 1; i <= par.timesteps; i++) {  //loop time steps
                     //zones
                     for (var j = 1; j <= par.zonenum; j++) {
+                        multi.select(6);
                         multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + j + '-' + md + '-ct');
                         spmvNum = spmvNum + 1;
                     }
                     //decision point
                     par.dcpnt.forEach(function (dcp) {
-                        //console.log("push decison point " + dcp + " to to-do list");
                         var t2 = ['tl', 'tf'];
                         t2.forEach(function (t) {
-                            multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + j + '-' + md + '-' + t);
+                            multi.select(7);
+                            multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + dcp + '-' + md + '-' + t);
                             spmvNum = spmvNum + 1;
+                            //logger.debug("push decison point " + 'sp-' + iter + '-' + i + '-' + dcp + '-' + md + '-' + t + " to task");
                         });
                     });
                 }
@@ -240,7 +263,7 @@ redisJob.on("message", function (channel, message) {
                                 VHT_square = VHT_square + math.pow(parseFloat(r[2]), 2);
                                 VHT_tot = VHT_tot + parseFloat(r[1]);
                                 if (parseFloat(r[0]) != 0 || parseFloat(r[1]) != 0) {
-                                    logger.debug('iter' + iter + ' link ' + key + ' vht ' + r);
+                                    //logger.debug('iter' + iter + ' link ' + key + ' vht ' + r);
                                     cntVHT = cntVHT + 1;
                                 }
                             })
@@ -263,7 +286,10 @@ redisJob.on("message", function (channel, message) {
                 //check convergence
                 if (iter < par.maxiter && gap > par.gap) {
                     iter = iter + 1;
-                    eventEmitter.emit('next_iter');
+                    redisClient.select(9);
+                    redisClient.set('iter', iter, function (err, result) {
+                        eventEmitter.emit('next_iter');
+                    });
                     callback();
                 } else {
                     //write csv file                  
