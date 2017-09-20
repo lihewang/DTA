@@ -38,15 +38,11 @@ fs.truncate('worker.log', 0, function () {
 var redisIP = "redis://127.0.0.1:6379";
 var appFolder = "./app";
 var paraFile = appFolder + "/parameters.json";
-var outputFile = "./output/vol.csv"
+var outsetFile = "./output/vol.csv"
 var redisClient = redis.createClient({ url: redisIP }), multi;
 var redisJob = redis.createClient({ url: redisIP }), multi;
 var arrLink = [];
 var par = null;
-var timeFFHash = new hashMap();
-var alphaHash = new hashMap();
-var betaHash = new hashMap();
-var capHash = new hashMap();
 var iter = 1;
 var gap = 1;
 var spmvNum = 0;
@@ -92,10 +88,6 @@ async.series([
                 for (var i = 1; i <= par.timesteps; i++) {
                     arrLink.push(data_id + ':' + i);
                 }
-                timeFFHash.set(data_id, data['Dist'] / data['Spd'] * 60);
-                alphaHash.set(data_id, data['Alpha']);
-                betaHash.set(data_id, data['Beta']);
-                capHash.set(data_id, data['Cap']);
             })
             .on("end", function (result) {
                 logger.info("read network total of " + result + " links");
@@ -133,7 +125,7 @@ async.series([
                 bar.update(1);
                 logger.info('writing trip table to redis');
                 TT.forEach(function (value, key) {
-                     multi.SET(key, value, function (err, result) {
+                     multi.set(key, value, function (err, result) {
                      });
                 });
                 multi.exec(function (err, result) {
@@ -162,13 +154,13 @@ var model_Loop = function () {
             multi.flushdb();
             par.modes.forEach(function (md) {   //loop modes
                 for (var i = 1; i <= par.timesteps; i++) {  //loop time steps
-                    //zones
+                    //zones (db6)
                     for (var j = 1; j <= par.zonenum; j++) {
                         multi.select(6);
                         multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + j + '-' + md + '-ct');
                         spmvNum = spmvNum + 1;
                     }
-                    //decision point
+                    //decision point (db7)
                     par.dcpnt.forEach(function (dcp) {
                         var t2 = ['tl', 'tf'];
                         t2.forEach(function (t) {
@@ -181,7 +173,7 @@ var model_Loop = function () {
                 }
             });
             multi.exec(function (err, result) {
-                logger.info('iter' + iter + ' put ' + spmvNum + ' sp tasks in redis');
+                logger.info('iter' + iter + ' set ' + spmvNum + ' sp tasks in redis');
                 callback();
             });
         },
@@ -196,7 +188,7 @@ var model_Loop = function () {
                 //logger.info('link task push ' + link);
             });
             multi.exec(function (err, result) {
-                logger.info('iter' + iter + ' put link task in redis');
+                logger.info('iter' + iter + ' set link task in redis');
                 callback();
             });
         }],
@@ -315,10 +307,10 @@ redisJob.on("message", function (channel, message) {
                             });
                         },
                         function (callback) {       
-                            csv.writeToStream(fs.createWriteStream(outputFile), rcd, { headers: true })
+                            csv.writeToStream(fs.createWriteStream(outsetFile), rcd, { headers: true })
                                 .on("finish", function () {
                                     redisClient.flushall();
-                                    logger.info('iter' + iter + ' end writing output');
+                                    logger.info('iter' + iter + ' end writing outset');
                                     callback();
                                 });
                         }],
