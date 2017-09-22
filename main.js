@@ -37,11 +37,12 @@ fs.truncate('worker.log', 0, function () {
 //Desktop deployment
 var redisIP = "redis://127.0.0.1:6379";
 var appFolder = "./app";
-var paraFile = appFolder + "/parameters.json";
+var paraFile = appFolder + "/parameters_95.json";
 var outsetFile = "./output/vol.csv"
 var redisClient = redis.createClient({ url: redisIP }), multi;
 var redisJob = redis.createClient({ url: redisIP }), multi;
 var arrLink = [];
+var dps = [];
 var par = null;
 var iter = 1;
 var gap = 1;
@@ -73,6 +74,23 @@ async.series([
         par = JSON.parse(fs.readFileSync(paraFile));
         logger.info("read parameters");
         callback();
+    },
+    //read node file
+    function (callback) {
+        var stream = fs.createReadStream(appFolder + "/" + par.nodefilename);
+        var csvStream = csv({ headers: true })
+            .on("data", function (data) {
+                var id = data['N'];
+                id = id.trim();
+                if (data['DTA_Type'] == par.dcpnttype) {
+                    dps.push(id);
+                }
+            })
+            .on("end", function (result) {
+                logger.info("read node total of " + result + " nodes");
+                callback();
+            });
+        stream.pipe(csvStream);
     },
     //read link file
     function (callback) {
@@ -161,7 +179,7 @@ var model_Loop = function () {
                         spmvNum = spmvNum + 1;
                     }
                     //decision point (db7)
-                    par.dcpnt.forEach(function (dcp) {
+                    dps.forEach(function (dcp) {
                         var t2 = ['tl', 'tf'];
                         t2.forEach(function (t) {
                             multi.select(7);
