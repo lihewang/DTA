@@ -1,10 +1,9 @@
 //main model controls
 
 // redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.VHT 5.trip table 
-//  6.shortest path task for TAZs 7.sp task for decision points 8.link task 9.iter
+//  6.shortest path task for TAZs 7.empty 8.link task 9.iter
 
 var redis = require('redis');
-var request = require('request');
 var async = require('async');
 var fs = require('fs');
 var csv = require('fast-csv');
@@ -42,7 +41,6 @@ var outsetFile = "./output/vol.csv"
 var redisClient = redis.createClient({ url: redisIP }), multi;
 var redisJob = redis.createClient({ url: redisIP }), multi;
 var arrLink = [];
-var dps = [];
 var par = null;
 var iter = 1;
 var gap = 1;
@@ -82,9 +80,6 @@ async.series([
             .on("data", function (data) {
                 var id = data['N'];
                 id = id.trim();
-                if (data['DTA_Type'] == par.dcpnttype) {
-                    dps.push(id);
-                }
             })
             .on("end", function (result) {
                 logger.info("read node total of " + result + " nodes");
@@ -119,16 +114,15 @@ async.series([
         var stream = fs.createReadStream(appFolder + "/" + par.triptablefilename);
         var key = '';
         var cnt = 0;
-        var tot = 0;
-        tot = math.pow(par.zonenum, 2) * 96 * par.modes.length
+        var tot = math.pow(par.zonenum, 2) * 96 * par.modes.length;
         var TT = new hashMap();
         bar.update(0);
         multi = redisClient.multi();
         multi.select(5);
         var csvStream = csv({ headers: true })
             .on("data", function (data) {
-                if (parseInt(data['TP']) <= par.timesteps) {
-                    key = data['I'] + ':' + data['TP'] + ':' + data['Mode'] + ':ct';
+                if (parseInt(data['TP']) <= par.timesteps) {    //each record is an origin
+                    key = data['I'] + ':' + data['TP'] + ':' + data['Mode'];
                     var v = TT.get(key);
                     if (v == null) {
                         TT.set(key, data['J'] + ':' + data['Vol']);
@@ -167,27 +161,15 @@ var model_Loop = function () {
             //create job queue in redis
             multi = redisClient.multi();
             multi.select(6);
-            multi.flushdb();
-            multi.select(7);
-            multi.flushdb();
+            multi.flushdb(); 
             par.modes.forEach(function (md) {   //loop modes
                 for (var i = 1; i <= par.timesteps; i++) {  //loop time steps
                     //zones (db6)
                     for (var j = 1; j <= par.zonenum; j++) {
                         multi.select(6);
-                        multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + j + '-' + md + '-ct');
+                        multi.RPUSH('task', iter + ',' + i + ',' + j + ',' + md);   //iter-timestep-zone-mode
                         spmvNum = spmvNum + 1;
                     }
-                    //decision point (db7)
-                    dps.forEach(function (dcp) {
-                        var t2 = ['tl', 'tf'];
-                        t2.forEach(function (t) {
-                            multi.select(7);
-                            multi.RPUSH('task', 'sp-' + iter + '-' + i + '-' + dcp + '-' + md + '-' + t);
-                            spmvNum = spmvNum + 1;
-                            //logger.debug("push decison point " + 'sp-' + iter + '-' + i + '-' + dcp + '-' + md + '-' + t + " to task");
-                        });
-                    });
                 }
             });
             multi.exec(function (err, result) {
@@ -201,8 +183,8 @@ var model_Loop = function () {
             multi = redisClient.multi();
             multi.select(8);
             multi.flushdb();
-            arrLink.forEach(function (link) {       //A-B:tp:iter
-                multi.RPUSH('task', link + ":" + iter);
+            arrLink.forEach(function (link) {       //A-B:tp
+                multi.RPUSH('task', link);
                 //logger.info('link task push ' + link);
             });
             multi.exec(function (err, result) {
@@ -272,9 +254,9 @@ redisJob.on("message", function (channel, message) {
                                 var r = result.split(',');
                                 VHT_square = VHT_square + math.pow(parseFloat(r[2]), 2);
                                 VHT_tot = VHT_tot + parseFloat(r[1]);
-                                if (parseFloat(r[0]) != 0 || parseFloat(r[1]) != 0) {
-                                    //logger.debug('iter' + iter + ' link ' + key + ' vht ' + r);
+                                if (parseFloat(r[0]) != 0 || parseFloat(r[1]) != 0) {                                   
                                     cntVHT = cntVHT + 1;
+                                    logger.debug('iter' + iter + ' link ' + key + ' vht ' + r + ' vht_squre=' + VHT_square + ' vht_total=' + VHT_tot + ' cnt=' + cntVHT);
                                 }
                             })
                         })
@@ -328,7 +310,7 @@ redisJob.on("message", function (channel, message) {
                             csv.writeToStream(fs.createWriteStream(outsetFile), rcd, { headers: true })
                                 .on("finish", function () {
                                     redisClient.flushall();
-                                    logger.info('iter' + iter + ' end writing outset');
+                                    logger.info('iter' + iter + ' end writing output');
                                     callback();
                                 });
                         }],
