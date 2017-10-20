@@ -1,7 +1,7 @@
 //main model controls
 
-// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time 4.VHT 5.trip table 
-//  6.shortest path task for TAZs 7.empty 8.link task 9.iter
+// redis db list - 1.shortest path  2.volume by mode and time step 3.congested time, volume 4.VHT 5.trip table 
+//  6.shortest path task for TAZs 7.toll 8.link task 9.iter 
 
 var redis = require('redis');
 var async = require('async');
@@ -98,9 +98,7 @@ async.series([
                 anode = anode.trim();
                 bnode = bnode.trim();
                 var data_id = anode + '-' + bnode;
-                for (var i = 1; i <= par.timesteps; i++) {
-                    arrLink.push(data_id + ':' + i);
-                }
+                arrLink.push(data_id);    //anode-bnode
             })
             .on("end", function (result) {
                 logger.info("read network total of " + result + " links");
@@ -153,9 +151,17 @@ async.series([
 
 //Loop iterations
 var model_Loop = function () {
+    logger.info('iter' + iter + ' create spmv tasks');
     refresh = true;
     spmvNum = 0;
     async.series([
+        function (callback) {
+            //delete vht list
+            redisClient.select(4);
+            redisClient.del('vht', function (err, result) {
+                callback();
+            });
+        },
         //create shortest paths for all time steps and modes               
         function (callback) {
             //create job queue in redis
@@ -166,7 +172,7 @@ var model_Loop = function () {
                 for (var i = 1; i <= par.timesteps; i++) {  //loop time steps
                     //zones (db6)
                     for (var j = 1; j <= par.zonenum; j++) {
-                        multi.select(6);
+                        //multi.select(6);
                         multi.RPUSH('task', iter + ',' + i + ',' + j + ',' + md);   //iter-timestep-zone-mode
                         spmvNum = spmvNum + 1;
                     }
@@ -179,16 +185,20 @@ var model_Loop = function () {
         },
         //link task
         function (callback) {
+            bar.update(0);
             linkupdateNum = arrLink.length;
             multi = redisClient.multi();
             multi.select(8);
             multi.flushdb();
-            arrLink.forEach(function (link) {       //A-B:tp
+            var cnt = 0;
+            arrLink.forEach(function (link) {       //anode-bnode
                 multi.RPUSH('task', link);
-                //logger.info('link task push ' + link);
+                cnt = cnt + 1;
+                bar.update(0.5);
             });
             multi.exec(function (err, result) {
-                logger.info('iter' + iter + ' set link task in redis');
+                bar.update(1);
+                logger.info('iter' + iter + ' set ' + linkupdateNum + ' link tasks in redis');
                 callback();
             });
         }],
@@ -219,7 +229,7 @@ redisJob.on("message", function (channel, message) {
             var tot = spmvNum;
         } else if (message.split(':')[1] == '8') {  //link update
             var tot = parseInt(linkupdateNum);
-        }
+        }     
         redisClient.LLEN('task', function (err, result) {
             var v = 1 - parseInt(result) / tot;
             if (refresh) {
@@ -228,10 +238,10 @@ redisJob.on("message", function (channel, message) {
                 }
                 bar.update(v);
             }
-        });       
+        });
     } else if (message == 'linkvolredis') {
         logger.info('iter' + iter + ' writting link volume to redis');
-    }else if (message == 'sp_mv_done') {
+    } else if (message == 'sp_mv_done') {
         redisClient.publish('job', 'linkupdate', function (err, result) {
             logger.info('iter' + iter + ' running link attributes update');   
             bar.update(0);
@@ -241,34 +251,33 @@ redisJob.on("message", function (channel, message) {
         logger.info('iter' + iter + ' link update done');
         var VHT_square = 0;
         var VHT_tot = 0;
+        var gap = 1;
         async.series([
             function (callback) {
                 //calculate gap
                 if (iter > 1) {
                     var cntVHT = 0;
-                    redisClient.select(4);
-                    redisClient.keys('*', function (err, results) {
-                        multi = redisClient.multi();
-                        results.forEach(function (key) {
-                            multi.get(key, function (err, result) {
-                                var r = result.split(',');
-                                VHT_square = VHT_square + math.pow(parseFloat(r[2]), 2);
-                                VHT_tot = VHT_tot + parseFloat(r[1]);
-                                if (parseFloat(r[0]) != 0 || parseFloat(r[1]) != 0) {                                   
-                                    cntVHT = cntVHT + 1;
-                                    logger.debug('iter' + iter + ' link ' + key + ' vht ' + r + ' vht_squre=' + VHT_square + ' vht_total=' + VHT_tot + ' cnt=' + cntVHT);
-                                }
-                            })
+                    var arrvht = [];
+                    multi = redisClient.multi();
+                    multi.select(4);
+                    multi.LRANGE('vht', '0', '-1', function (err, result) {
+                        arrvht = result;
+                    });
+                    multi.exec(function (err, result) {
+                        var vht_tot = 0;
+                        var vht_square = 0;
+                        arrvht.forEach(function (vht) {
+                            var v = vht.split(',');
+                            vht_tot = vht_tot + parseFloat(v[0]);
+                            vht_square = vht_square + math.pow(parseFloat(v[1]), 2);
                         })
-                        multi.exec(function () {
-                            if (VHT_tot != 0) {
-                                gap = math.pow(VHT_square / cntVHT, 0.5) * cntVHT / VHT_tot;
-                            } else {
-                                gap = 0;
-                            }
-                            logger.info('iter' + iter + ' gap=' + math.round(gap, 2) + ',VHT_square=' + math.round(VHT_square, 2) + ',VHT_tot=' + math.round(VHT_tot, 2) + ',linknum=' + cntVHT);
-                            callback();
-                        });
+                        if (arrvht.length != 0) {
+                            gap = math.pow(vht_square / arrvht.length, 0.5) * arrvht.length / vht_tot;
+                        } else {
+                            gap = 0;
+                        }
+                        logger.info('iter' + iter + ' gap=' + math.round(gap, 4) + ' arrvht=' + arrvht.length + ' vht_tot=' + vht_tot + ' vht_square=' + vht_square);
+                        callback();
                     });
                 } else {
                     callback();
@@ -309,7 +318,7 @@ redisJob.on("message", function (channel, message) {
                         function (callback) {       
                             csv.writeToStream(fs.createWriteStream(outsetFile), rcd, { headers: true })
                                 .on("finish", function () {
-                                    redisClient.flushall();
+                                    //redisClient.flushall();
                                     logger.info('iter' + iter + ' end writing output');
                                     callback();
                                 });
