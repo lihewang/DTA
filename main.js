@@ -36,7 +36,7 @@ fs.truncate('worker.log', 0, function () {
 //Desktop deployment
 var redisIP = "redis://127.0.0.1:6379";
 var appFolder = "./app";
-var paraFile = appFolder + "/parameters_95.json";
+var paraFile = appFolder + "/parameters.json";
 var outsetFile = "./output/vol.csv"
 var redisClient = redis.createClient({ url: redisIP }), multi;
 var redisJob = redis.createClient({ url: redisIP }), multi;
@@ -73,6 +73,36 @@ async.series([
         logger.info("read parameters");
         callback();
     },
+    function (callback) {
+        //create logToll file
+        var logTollFile = './output' + '/' + par.log.tollfilename;
+        fs.unlink(logTollFile, function (err, result) {
+            var arrTollLog = [];
+            arrTollLog.push(["iter", "tStep", "A", "B", "vol", "cap", "vc", "toll", "exp", "mintoll", "maxtoll"]);
+            csv.writeToStream(fs.createWriteStream(logTollFile, { 'flags': 'a' }), arrTollLog, { headers: true });
+            callback();
+        });       
+    },
+    function (callback) {
+        //create logChoice file
+        var logChoiceFile = './output' + '/' + par.log.dpnodefilename;
+        fs.unlink(logChoiceFile, function (err, result) {
+            var arrLog = [];
+            arrLog.push(["iter", "tStep", "dpID", "destID", "distTl", "distTf", "timeTl", "timeTf", "timeFFTl", "timeFFTf", "Toll", "utility", "TlProbility"]);
+            csv.writeToStream(fs.createWriteStream(logChoiceFile, { 'flags': 'a' }), arrLog, { headers: true });
+            callback();
+        });       
+    },
+    function (callback) {
+        //create logConverge file
+        var logCvgFile = './output' + '/' + par.log.convergefilename;
+        fs.unlink(logCvgFile, function (err, result) {
+            var arrLog = [];
+            arrLog.push(["iter", "tStep", "RgapVHT"]);
+            csv.writeToStream(fs.createWriteStream(logCvgFile, { 'flags': 'a' }), arrLog, { headers: true });
+            callback();
+        });
+    },
     //read node file
     function (callback) {
         var stream = fs.createReadStream(appFolder + "/" + par.nodefilename);
@@ -99,6 +129,13 @@ async.series([
                 bnode = bnode.trim();
                 var data_id = anode + '-' + bnode;
                 arrLink.push(data_id);    //anode-bnode
+                //Check network for errors
+                var attributes = ['TIME', 'Dist', 'Spd', 'Cap', 'Ftype', 'TOLL', 'TOLLTYPE', 'Alpha', 'Beta'];
+                attributes.forEach(function (a) {
+                    if (data[a] == '') {
+                        logger.debug(`[${process.pid}]` + ' warning!!! network attribute ' + a + ' has null value!!!');
+                    }
+                });
             })
             .on("end", function (result) {
                 logger.info("read network total of " + result + " links");
@@ -249,43 +286,62 @@ redisJob.on("message", function (channel, message) {
         }); 
     } else if (message == 'linkupdate_done') {
         logger.info('iter' + iter + ' link update done');
-        var VHT_square = 0;
-        var VHT_tot = 0;
-        var gap = 1;
+        var gap = [];
+        gap.push(0);
+        var arrCvgLog = [[]];
+        var maxGap = 0;
         async.series([
             function (callback) {
                 //calculate gap
                 if (iter > 1) {
                     var cntVHT = 0;
                     var arrvht = [];
-                    multi = redisClient.multi();
-                    multi.select(4);
-                    multi.LRANGE('vht', '0', '-1', function (err, result) {
-                        arrvht = result;
-                    });
-                    multi.exec(function (err, result) {
-                        var vht_tot = 0;
-                        var vht_square = 0;
-                        arrvht.forEach(function (vht) {
-                            var v = vht.split(',');
-                            vht_tot = vht_tot + parseFloat(v[0]);
-                            vht_square = vht_square + math.pow(parseFloat(v[1]), 2);
-                        })
-                        if (arrvht.length != 0) {
-                            gap = math.pow(vht_square / arrvht.length, 0.5) * arrvht.length / vht_tot;
-                        } else {
-                            gap = 0;
+                    var arrTs = [];
+                    for (var i = 1; i <= par.timesteps; i++) {
+                        arrTs.push(i);
+                    }
+                    async.each(arrTs,
+                        function (ts, callback) {
+                            multi = redisClient.multi();
+                            multi.select(4);
+                            multi.LRANGE('vht' + ts, '0', '-1', function (err, result) {
+                                arrvht = result;
+                            });
+                            multi.exec(function (err, result) {
+                                var vht_tot = 0;
+                                var vht_square = 0;
+                                arrvht.forEach(function (vht) {
+                                    var v = vht.split(',');                                   
+                                    vht_tot = vht_tot + parseFloat(v[0]);
+                                    vht_square = vht_square + math.pow(parseFloat(v[1]), 2);
+                                });
+                                if (arrvht.length != 0) {
+                                    var gp = math.pow(vht_square / arrvht.length, 0.5) * arrvht.length / vht_tot;
+                                    arrCvgLog.push([iter, ts, math.round(gp,4)]);
+                                    gap.push(gp);
+                                    maxGap = math.max(gp, maxGap);
+                                } else {
+                                    arrCvgLog.push([iter, ts, 0]);
+                                    gap.push(0);
+                                }
+                                //logger.info('iter' + iter + ' timestep=' + ts + ' gap=' + gp + ' vht_square=' + math.round(vht_square, 0)
+                                //                + ' vht_tot=' + math.round(vht_tot, 0) + ' arrvht length=' + arrvht.length);
+                                callback();
+                            });
+                        },
+                        function (err) {
+                            csv.writeToStream(fs.createWriteStream('./output' + '/' + par.log.convergefilename, { 'flags': 'a' }), arrCvgLog, { headers: true })
+                            logger.info('iter' + iter + ' gap=' + maxGap);
+                            callback();
                         }
-                        logger.info('iter' + iter + ' gap=' + math.round(gap, 4) + ' arrvht=' + arrvht.length + ' vht_tot=' + vht_tot + ' vht_square=' + vht_square);
-                        callback();
-                    });
+                    );    
                 } else {
                     callback();
                 }   
             },
             function (callback) {           
                 //check convergence
-                if (iter < par.maxiter && gap > par.gap) {
+                if (iter == 1 || (iter < par.maxiter && maxGap > par.gap)) {
                     iter = iter + 1;
                     redisClient.select(9);
                     redisClient.set('iter', iter, function (err, result) {
