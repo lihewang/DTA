@@ -1,7 +1,7 @@
 //main model controls
 
 // redis db list - 1.shortest path  2.volume by mode and time step 3.congested time, volume 4.VHT 5.trip table 
-//  6.shortest path task for TAZs 7.toll 8.link task 9.iter 10.VHT_Diff 
+//  6.shortest path task for TAZs 7.toll 8.link task 9.iter 10.VHT_Diff 11.dp probability
 
 var redis = require('redis');
 var async = require('async');
@@ -12,6 +12,7 @@ var math = require('mathjs');
 var events = require('events');
 var log4js = require('log4js');
 var progressBar = require('progress');
+var os = require('os');
 
 log4js.configure({
     appenders: {
@@ -36,7 +37,7 @@ fs.truncate('worker.log', 0, function () {
 //Desktop deployment
 var redisIP = "redis://127.0.0.1:6379";
 var appFolder = "./app";
-var paraFile = appFolder + "/parameters.json";
+var paraFile = appFolder + "/parameters_95.json";
 var outsetFile = "./output/vol.csv"
 var redisClient = redis.createClient({ url: redisIP }), multi;
 var redisJob = redis.createClient({ url: redisIP }), multi;
@@ -48,9 +49,10 @@ var spmvNum = 0;
 var linkupdateNum = 0;
 var refresh = true;
 var startTimeStep = 1;
-var endTimeStep = 0;
+var endTimeStep = 96;
 var eventEmitter = new events.EventEmitter();
 var bar = new progressBar('[:bar] [:percent]', { width: 80, total: 100 });
+var cvgStream = null;
 
 //set global iter
 redisClient.select(9);
@@ -79,9 +81,9 @@ async.series([
         //create logToll file
         var logTollFile = './output' + '/' + par.log.tollfilename;
         fs.unlink(logTollFile, function (err, result) {
-            var arrTollLog = [];
-            arrTollLog.push(["iter", "tStep", "A", "B", "vol", "cap", "vc", "toll", "exp", "mintoll", "maxtoll"]);
-            csv.writeToStream(fs.createWriteStream(logTollFile, { 'flags': 'a' }), arrTollLog, { headers: true });
+            var tollStream = fs.createWriteStream(logTollFile);
+            tollStream.write("iter,tStep,A,B,vol,cap,vc,toll,MSAtoll,exp,mintoll,maxtoll" + os.EOL);
+            tollStream.end();
             callback();
         });       
     },
@@ -90,7 +92,7 @@ async.series([
         var logChoiceFile = './output' + '/' + par.log.dpnodefilename;
         fs.unlink(logChoiceFile, function (err, result) {
             var arrLog = [];
-            arrLog.push(["iter", "tStep", "dpID", "destID", "distTl", "distTf", "timeTl", "timeTf", "timeFFTl", "timeFFTf", "Toll", "utility", "TlShare"]);
+            arrLog.push(["iter", "tStep", "dpID", "destID", "distTl", "distTf", "timeTl", "timeTf", "timeFFTl", "timeFFTf", "TollEL", "TollGP", "utility", "TlShare"]);
             csv.writeToStream(fs.createWriteStream(logChoiceFile, { 'flags': 'a' }), arrLog, { headers: true });
             callback();
         });       
@@ -98,10 +100,9 @@ async.series([
     function (callback) {
         //create logConverge file
         var logCvgFile = './output' + '/' + par.log.convergefilename;
-        fs.unlink(logCvgFile, function (err, result) {
-            var arrLog = [];
-            arrLog.push(["iter", "tStep", "RgapVHT"]);
-            csv.writeToStream(fs.createWriteStream(logCvgFile, { 'flags': 'a' }), arrLog, { headers: true });
+        fs.unlink(logCvgFile, function (err, result) { 
+            cvgStream = fs.createWriteStream(logCvgFile);
+            cvgStream.write("iter, tStep, RgapVHT" + os.EOL);
             callback();
         });
     },
@@ -294,7 +295,7 @@ redisJob.on("message", function (channel, message) {
         logger.info('iter' + iter + ' link update done');
         var gap = [];
         gap.push(0);
-        var arrCvgLog = [[]];
+        var arrCvgLog = [];
         var maxGap = 0;
         async.series([
             function (callback) {
@@ -303,15 +304,16 @@ redisJob.on("message", function (channel, message) {
                     var cntVHT = 0;
                     var arrvht = [];
                     var arrTs = [];
-                    for (var i = 1; i <= par.timesteps; i++) {
+                    for (var i = startTimeStep; i <= endTimeStep; i++) {
                         arrTs.push(i);
                     }
+                    logger.info('iter' + iter + ' startTimeStep=' + startTimeStep + ' endTimeStep=' + endTimeStep);
                     async.each(arrTs,
                         function (ts, callback) {
                             multi = redisClient.multi();
                             multi.select(10);
                             multi.LRANGE('vht' + ts, '0', '-1', function (err, result) {
-                                arrvht = result;
+                                arrvht = result;                               
                             });
                             multi.exec(function (err, result) {
                                 var vht_tot = 0;
@@ -330,7 +332,8 @@ redisJob.on("message", function (channel, message) {
                                     } else {
                                         var gp = math.pow((vht_square / arrvht.length), 0.5) / (vht_tot / arrvht.length);
                                     }
-                                    arrCvgLog.push([iter, ts, math.round(gp,4)]);
+                                    arrCvgLog.push([iter, ts, math.round(gp, 4)]);
+                                    //logger.info('iter' + iter + ' arrCvgLog add' + '[' + iter + ',' + ts + ',' + math.round(gp, 4) + ']');
                                     gap.push(gp);
                                     maxGap = math.max(gp, maxGap);
                                 } else {
@@ -346,32 +349,34 @@ redisJob.on("message", function (channel, message) {
                         },
                         function (err) {
                             //start from timestep 1, find the boudary of time steps that meet the threshold
-                            startTimeStep = 1;
-                            //for (var i = 1; i <= par.timesteps; i++) {
-                            //    var ts = arrCvgLog[i][1];
-                            //    if (arrCvgLog[i][2] < par.timestepgap) {
-                            //        startTimeStep = ts;
-                            //    } else {
-                            //        break;
-                            //    }
-                            //}
-                            endTimeStep = par.timesteps;
-                            //for (var i = par.timesteps; i >= 1; i--) {
-                            //    var ts = arrCvgLog[i][1];
-                            //    if (arrCvgLog[i][2] < par.timestepgap) {
-                            //        endTimeStep = ts;
-                            //    } else {
-                            //        break;
-                            //    }
-                            //}
-                            csv.writeToStream(fs.createWriteStream('./output' + '/' + par.log.convergefilename, { 'flags': 'a' }), arrCvgLog, { headers: true })
+                            //logger.info('iter' + iter + ' this iter startTimeStep=' + startTimeStep + ' endTimeStep=' + endTimeStep + ' arrCvgLog length=' + arrCvgLog.length);
+                            for (var i = 0; i < arrCvgLog.length; i++) {
+                                //logger.info('iter' + iter + ' ts=' + arrCvgLog[i][1]);
+                                if (arrCvgLog[i][2] >= par.timestepgap) {
+                                    startTimeStep = arrCvgLog[i][1];
+                                    break;
+                                }                                
+                            }
+                            for (var i = arrCvgLog.length - 1; i >= 0; i--) {
+                                var ts = arrCvgLog[i][1];
+                                if (arrCvgLog[i][2] >= par.timestepgap) {
+                                    endTimeStep = ts
+                                    break;
+                                }
+                            }
+                            for (var i = 0; i < arrCvgLog.length; i++) {
+                                cvgStream.write(arrCvgLog[i][0] + ',' + arrCvgLog[i][1] + ',' + arrCvgLog[i][2] + os.EOL);
+                            }                           
+                            //csv.writeToStream(fs.createWriteStream('./output' + '/' + par.log.convergefilename, { 'flags': 'a' }), arrCvgLog, { headers: true })
                             logger.info('iter' + iter + ' gap=' + maxGap + ', next iter start ts=' + startTimeStep + ', end ts=' + endTimeStep);
-                            callback();
-                        }
-                    );    
-                } else {
+                         }
+                    );                    
+                } 
+                redisClient.select(9);
+                redisClient.set('startTimeStep', startTimeStep);
+                redisClient.set('endTimeStep', endTimeStep, function (err, result) {
                     callback();
-                }   
+                });
             },
             function (callback) {           
                 //check convergence
@@ -393,12 +398,12 @@ redisJob.on("message", function (channel, message) {
                                 multi = redisClient.multi();
                                 results.forEach(function (key) {
                                     var arrKey = key.split(':');
-                                    if (arrKey != 'cntNode') { //&& parseInt(arrKey[3]) == iter
+                                    if (arrKey != 'cntNode' && parseInt(arrKey[3]) == iter) { //&& parseInt(arrKey[3]) == iter
                                         var arrKey = key.split(":");
                                         var nd = arrKey[0].split('-');
                                         multi.get(key, function (err, result) {
                                             rcd.push([arrKey[3], nd[0], nd[1], arrKey[1], arrKey[2], math.round(result, 2)]);
-                                        })
+                                        });
                                     }
                                 })
                                 multi.exec(function () {
@@ -415,6 +420,7 @@ redisJob.on("message", function (channel, message) {
                                 });
                         }],
                         function (err, results) {
+                            cvgStream.end();
                             callback(null, "End of program");
                         }); 
                 }

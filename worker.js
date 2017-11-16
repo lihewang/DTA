@@ -8,6 +8,7 @@ var math = require('mathjs');
 var Scripto = require('redis-scripto');
 var cluster = require('cluster');
 var log4js = require('log4js');
+var os = require('os');
 
 log4js.configure({
     appenders: {
@@ -35,19 +36,23 @@ var cntPackets = 0;
 
 var redisIP = "redis://127.0.0.1:6379";
 var appFolder = "./app";
-var paraFile = appFolder + "/parameters.json";
+var paraFile = appFolder + "/parameters_95.json";
 var luaScript_msa = appFolder + '/msa.lua';
+var luaScript_msa_toll = appFolder + '/msa_toll.lua';
 
 var redisClient = redis.createClient({ url: redisIP }), multi; 
 var redisJob = redis.createClient({ url: redisIP }), multi;
 var par = JSON.parse(fs.readFileSync(paraFile));
 var linkFile = appFolder + '/' + par.linkfilename;
 var nodeFile = appFolder + '/' + par.nodefilename;
+var startTimeStep = 1;
+var endTimeStep = par.timesteps;
 var logTollFile = './output' + '/' + par.log.tollfilename;
 
 //load redis lua script
 var scriptManager = new Scripto(redisClient);
 scriptManager.loadFromFile('msa', luaScript_msa);
+scriptManager.loadFromFile('msa_toll', luaScript_msa_toll);
 
 //********node reader********
 var rdnd = function Readcsv(callback) {
@@ -56,10 +61,15 @@ var rdnd = function Readcsv(callback) {
         .on("data", function (data) {
             var id = data['N'];
             id = id.trim();
+            var pRcd = [];
             if (data['DTA_Type'] == par.dcpnttype) {
                 dps.push(id);
+                pRcd = new hashMap();
             }
-            var nd = { id: parseInt(id), dnd: [], dnlnk: [], vsted: [999,999,999], stled: 0, pqindex:0, pnd: null, type: data['DTA_Type'], segnum: data['SEGNUM'], prohiblnk: data['Prohibit_Links'] };
+            var nd = {
+                id: parseInt(id), dnd: [], dnlnk: [], vsted: [999, 999, 999], stled: 0, pqindex: 0, pnd: null, type: data['DTA_Type'], segnum: data['SEGNUM'],
+                prohiblnk: data['Prohibit_Links'], tollshare: pRcd
+            };
             allNodes.set(nd.id, nd);
         })
         .on("end", function (result) {
@@ -146,8 +156,10 @@ var initLink = function init_links(callback) {
     callback(null, "init links");
 }
 //********find time dependent shortest path and write results to redis********
-var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, callback) {
-    //logger.debug(`[${process.pid}]` + ' iter' + iter + ' ***SP for zone ' + zone + ', tp ' + tp + ', mode ' + mode + ', pathType ' + pathType);
+var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, zj, callback) {
+    //if (iter == 6 && tp == 65 && zone == 11) {
+    //    logger.debug(`[${process.pid}]` + ' iter' + iter + ' ***SP for zone ' + zone + ', tp ' + tp + ', mode ' + mode + ', pathType ' + pathType);
+    //}
     //single node shortest path
     var ftypeBan = [];
     async.series([
@@ -187,8 +199,8 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, callback
                 currNode = pq.splice(0, 1)[0];     //remove root
                 currNode.stled = 1;
                 
-                //if (currNode.id == 37) {
-                    //logger.debug(`[${process.pid}]` + ' --sp settled currNode=' + currNode.id + ' pq length=' + pq.length);
+                //if (iter == 6 && tp == 65 && zone == 11) {
+                //    logger.debug(`[${process.pid}]` + ' --sp settled currNode=' + currNode.id + ' pq length=' + pq.length);
                 //}
                 if (pq.length > 0) {
                     pq.unshift(pq.splice(pq.length - 1, 1)[0]);      //move last node to the root
@@ -245,8 +257,10 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, callback
                     continue;
                 }
                 
-                var dnNodes = currNode.dnd;  //get new frontier nodes  
-                //logger.debug(`[${process.pid}]` + ' Iter' + iter + ' ---sp currNode=' + currNode.id + ' dnNodes Cnt=' + dnNodes.length);
+                var dnNodes = currNode.dnd;  //get new frontier nodes 
+                //if (iter == 6 && tp == 65 && zone == 11) {
+                //    logger.debug(`[${process.pid}]` + ' Iter' + iter + ' ---sp currNode=' + currNode.id + ' dnNodes Cnt=' + dnNodes.length);
+                //}
                 for (i = 0; i < dnNodes.length; i++) {
                     var dnNode = dnNodes[i];
                     var dnLink = currNode.dnlnk[i];
@@ -285,21 +299,22 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, callback
                             mintoll = par.tollpolicy.mintoll;
                         }                       
                         if (pathType == 'ct') {
-                            var alltoll = fixtoll + mintoll;                   
+                            var alltoll = fixtoll + mintoll;    //ct path toll               
                         } else {
-                            var alltoll = fixtoll;  //tl anf tf path exclude mintoll
+                            var alltoll = fixtoll;              //tl and tf path use fixtoll only
                         }
                         //get perceived time factor
                         var perceiveFactor = 1;
                         if (pathType != 'ct' && iter>1) {
                             perceiveFactor = 1 + (par.choicemodel.perceivetimemaxvc - 1) / (1 + math.exp(-1 * par.choicemodel.perceivetimesteep *
-                                (dnLink.volmsa[timePeriod] * 4 / dnLink.cap - par.choicemodel.perceivetimemidvc)));
+                                (dnLink.volmsa[timePeriod] * 4 / dnLink.cap - par.choicemodel.perceivetimemidvc)));                           
                         }
                         var tempTime = currNode.vsted[0] + dnLink.time[timePeriod];               //time
                         var tempImp = currNode.vsted[Imp] + dnLink.time[timePeriod] * perceiveFactor + alltoll / (par.choicemodel.timecoeff / par.choicemodel.tollcoeff);        //impedance
-                        //logger.debug(`[${process.pid}]` + ' Iter' + iter + ' dnLinkTime=' + dnLink.time[timePeriod] + ' timePeriod=' + timePeriod +
-                        //    ' tempTime=' + tempTime + ' tempImp=' + tempImp + ' toll=' + alltoll + ' dnNodeImp=' + dnNode.vsted[Imp] + ' perceivefct=' + perceiveFactor);
-
+                        //if (iter == 6 && tp == 65 && zone == 11) {
+                        //    logger.debug(`[${process.pid}]` + ' Iter' + iter + ' dnLinkTime=' + dnLink.time[timePeriod] + ' timePeriod=' + timePeriod +
+                        //        ' tempTime=' + tempTime + ' tempImp=' + tempImp + ' toll=' + alltoll + ' dnNodeImp=' + dnNode.vsted[Imp] + ' perceivefct=' + perceiveFactor);
+                        //}
                         if (tempImp < dnNode.vsted[Imp]) {
                             var index = 0;
                             //dnNode has not been checked before or update time when the path is shorter                             
@@ -343,11 +358,13 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, callback
                             if (dnNode.id <= zonenum) { //track centriod nodes
                                 cnt = cnt + 1;
                             }
-                            dnNode.pnd = [currNode, dnNode, dnLink, tempTime, timePeriod, tempImp];                           
-                            //logger.debug(`[${process.pid}]` + " ---Node=" + dnNode.pnd[0].id + ' dnNode=' + dnNode.pnd[1].id + ' time=' + dnNode.pnd[3] + ' tp=' + dnNode.pnd[4] + ' imp=' + dnNode.pnd[5]);                          
-                        }
+                            dnNode.pnd = [currNode, dnNode, dnLink, tempTime, timePeriod, tempImp]; 
+                            //if (iter == 6 && tp == 65 && zone == 11) {
+                            //    logger.debug(`[${process.pid}]` + " ---Node=" + dnNode.pnd[0].id + ' dnNode=' + dnNode.pnd[1].id + ' time=' + dnNode.pnd[3] + ' tp=' + dnNode.pnd[4] + ' imp=' + dnNode.pnd[5]);                          
+                            //}
+                            }
                     }                    
-                }
+                }         
             }while (pq.length > 0 && cnt <= zonenum);
             
             //put paths to hashtables
@@ -374,11 +391,8 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, callback
                         for (var j = 0; j <= path.length - 1; j++) {
                             var link = path[j][2];
                             skimDist = skimDist + parseFloat(link.dist);
-                            if (link.tolltype == 1) {   //Express lanes toll
-                                skimToll = skimToll + link.toll[tp];
-                                //if (link.toll[tp] != 0) {
-                                //    logger.debug(`[${process.pid}]` + ' Iter' + iter + ' tp=' + tp + ' link ' + link.aNd.id + '-' + link.bNd.id + ' toll=' + link.toll[tp]);
-                                //}
+                            if (link.tolltype == par.tolltype.dynamic || link.tolltype == par.tolltype.fix) {
+                                skimToll = skimToll + link.toll[tp];            //including EL and fixed toll   
                             }
                             skimFFtime = skimFFtime + link.fftime[tp];
                         }
@@ -397,7 +411,7 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, callback
                         pathHash.set(key, path);
                     }
                     //start log
-                    //if (zonePair == '11-2' && tp == 67) {
+                    //if (iter == 6 && tp == 65 && zone == 11) {
                     //    var strPath = '';
                     //    for (var i = 0; i <= path.length - 1; i++) {
                     //        strPath = path[i][1].id + ',' + strPath;
@@ -456,17 +470,19 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, callback
                 var dist = [0, 0];
                 var toll = [0, 0];
                 var timeFF = [0, 0];
-                var probility = 0; 
-                
+                var probability = 0; 
+                //get paths skims
                 for (var i = 0; i <= 1; i++){       //tl (i=0) and tf (i=1)
                     var key = tpNew + ":" + aNode.id + '-' + zj + ":" + mode + ":" + ptype[i];
+                    var log = false;
                     tltfPath[i] = pathHash.get(key);
                     if (tltfPath[i] == null) {  //tltf path is not built before
-                        //build dp sp
-                        //logger.debug(`[${process.pid}]` + ' iter ' + iter + ' dp get path key=' + key);
-                        sp(parseInt(aNode.id), par.zonenum, tpNew, mode, ptype[i], iter, function (err, result) {
+                        //build dp sp                       
+                        sp(parseInt(aNode.id), par.zonenum, tpNew, mode, ptype[i], iter, zj, function (err, result) {
+                            log = true;
                             tltfPath[i] = pathHash.get(key);
                             if (tltfPath[i] == null) {
+                                //logger.debug(`[${process.pid}]` + ' iter ' + iter + ' dp get path key=' + key);
                                 dist[i] = 9999;
                             } else {
                                 var pathSkim = pathHash.get(key + ':skim');
@@ -486,11 +502,11 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, callback
                     } 
                 }
                 if (dist[0] > dist[1] * parseFloat(par.distmaxfactor)) {
-                    probility = 0;
-                    //logger.debug(`[${process.pid}]` + ' iter ' + iter + ' probility=0');
+                    probability = 0;
+                    //logger.debug(`[${process.pid}]` + ' iter ' + iter + ' probability=0');
                 } else if (dist[1] > dist[0] * parseFloat(par.distmaxfactor)) {
-                    probility = 1;
-                    //logger.debug(`[${process.pid}]` + ' iter ' + iter + ' probility=1 distTf=' + distTf + ' distTl=' + distTl);
+                    probability = 1;
+                    //logger.debug(`[${process.pid}]` + ' iter ' + iter + ' probability=1 distTf=' + distTf + ' distTl=' + distTl);
                 } else {
                     //var setDist = 7.2;
                     var scale = math.pow((par.choicemodel.scalestdlen / dist[0]), par.choicemodel.scalealpha);
@@ -498,31 +514,39 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, callback
                             ((timeFF[1] - time[1]) * math.pow(dist[1], (-1 * par.choicemodel.reliacoeffdist))
                             - (timeFF[0] - time[0]) * math.pow(dist[0], (-1 * par.choicemodel.reliacoeffdist)));
                     var utility = -1 * par.choicemodel.tollconst[tp - 1] - scale * (par.choicemodel.timecoeff * (time[0] - time[1])
-                        + par.choicemodel.tollcoeff * toll[0] + relia);
+                        + par.choicemodel.tollcoeff * (toll[0] - toll[1]) + relia);
 
-                    probility = 1 / (1 + math.exp(utility));
-                    var arrLog = [[]];
-                    arrLog.push([iter, tpNew, aNode.id, zj, math.round(dist[0], 2), math.round(dist[1], 2), math.round(time[0], 2), math.round(time[1], 2), timeFF[0], timeFF[1], toll[0],
-                        math.round(utility, 2), math.round(probility, 4)]);
-                    if (par.log.dpnode.findIndex(k=> k==aNode.id) != -1) {
-                        csv.writeToStream(fs.createWriteStream('./output' + '/' + par.log.dpnodefilename, { 'flags': 'a' }), arrLog, { headers: true });
-                    }
-                    //logger.debug('probility calculation: tollconst=' + par.choicemodel.tollconst[tp - 1] + ',scalesdlen=' + par.choicemodel.scalestdlen
+                    probability = 1 / (1 + math.exp(utility));
+                    //log file
+                    var pkey = zj + ':' + tpNew + ':' + mode;
+                    var pRcd = aNode.tollshare;
+                    if (!pRcd.has(iter + ':' + pkey)) {                             //hasn't been checked in this iteration  
+                        if (log) {
+                            var arrLog = [[]];
+                            arrLog.push([iter, tpNew, aNode.id, zj, math.round(dist[0], 2), math.round(dist[1], 2), math.round(time[0], 2), math.round(time[1], 2), timeFF[0], timeFF[1], toll[0], toll[1],
+                                math.round(utility, 2), math.round(probability, 4)]);
+                            if (par.log.dpnode.findIndex(k => k == aNode.id) != -1) {
+                                csv.writeToStream(fs.createWriteStream('./output' + '/' + par.log.dpnodefilename, { 'flags': 'a' }), arrLog, { headers: true });
+                            }
+                        }
+                        pRcd.set(iter + ':' + pkey, probability);
+                    }                    
+                    //logger.debug('probability calculation: tollconst=' + par.choicemodel.tollconst[tp - 1] + ',scalesdlen=' + par.choicemodel.scalestdlen
                     //    + ',scalealpha=' + par.choicemodel.scalealpha + ',timecoeff=' + par.choicemodel.timecoeff
                     //    + ',tollcoeff=' + par.choicemodel.tollcoeff + ',reliacoeffratio=' + par.choicemodel.reliacoeffratio
                     //    + ',reliacoefftime=' + par.choicemodel.reliacoefftime + ',reliacoeffdist=' + par.choicemodel.reliacoeffdist);
                     //logger.debug(`[${process.pid}]` + ' iter ' + iter + ' dp id=' + aNode.id + ' distTl=' + math.round(dist[0], 2) + ',distTf=' + math.round(dist[1], 2) + ',timeTl=' + math.round(time[0], 2)
                     //    + ',timeTf=' + math.round(time[1], 2) + ',timeFFTl=' + timeFF[0] + ',timeFFTf=' + timeFF[1] + ',Toll=' + math.round(toll[0], 2)
-                    //    + ',utility=' + math.round(utility, 2) + ',probility=' + math.round(probility, 4));
+                    //    + ',utility=' + math.round(utility, 2) + ',probability=' + math.round(probability, 4));
                 }
                 var splitVol = [0, 0];
-                if (probility == 0) {
+                if (probability == 0) {
                     splitVol[1] = vol;
-                } else if (probility == 1) {
+                } else if (probability == 1) {
                     splitVol[0] = vol;
                 } else {
-                    splitVol[0] = vol * probility;
-                    splitVol[1] = vol * (1 - probility);
+                    splitVol[0] = vol * probability;
+                    splitVol[1] = vol * (1 - probability);
                 }                
                 for (var i = 0; i <= 1; i++) {
                     if (splitVol[i] > 0) {
@@ -615,6 +639,23 @@ if (cluster.isMaster) {
             redisClient.publish('job_status', 'sp_mv_zones');
             async.series([
                 function (callback) {
+                    redisClient.select(9);
+                    redisClient.get('iter', function (err, result) {
+                        iter = parseInt(result);
+                        if (iter >= 2) {  //iter>=2   
+                            redisClient.get('startTimeStep', function (err, result) {
+                                startTimeStep = parseInt(result);
+                                redisClient.get('endTimeStep', function (err, result) {
+                                    endTimeStep = parseInt(result);                                    
+                                    callback();
+                                });
+                            });                            
+                        } else {
+                            callback();
+                        }
+                    });
+                },
+                function (callback) {
                     //update time and volume if iter >= 2
                     redisClient.select(9);
                     redisClient.get('iter', function (err, result) {
@@ -630,7 +671,9 @@ if (cluster.isMaster) {
                                     var link = allLinks.get(linkid);
                                     link.time[tp] = time;
                                     link.volmsa[tp] = volmsa;
-                                    //logger.info(`[${process.pid}]` + ' iter' + iter + ' tp=' + tp + ' link=' + arrLink[i] + ' time=' + link.time[tp]);
+                                    //if (iter == 6 && (tp == 64 || tp == 65)) {
+                                    //    logger.info(`[${process.pid}]` + ' iter' + iter + ' tp=' + tp + ' link=' + arrLink[i] + ' volmsa=' + volmsa + ' time=' + link.time[tp]);
+                                    //}
                                 }
                                 callback();
                             });
@@ -707,7 +750,7 @@ if (cluster.isMaster) {
                             async.series([
                                 function (callback) {
                                     //**build sp
-                                    sp(parseInt(spZone), par.zonenum, timeStep, mode, pathType, iter, function (err, result) {
+                                    sp(parseInt(spZone), par.zonenum, timeStep, mode, pathType, iter, 0, function (err, result) {
                                         callback();
                                     })
                                 },
@@ -786,8 +829,8 @@ if (cluster.isMaster) {
             allLinks.forEach(function (value, key) {
                 //key in db=aNode.id + '-' + bNode.id + ':' + tpNew + ':' + mode + ':' + iter;                
                 cnt = cnt + 1;
-                for (var i = 0; i <= par.modes.length; i++) {
-                    for (var j = 0; j <= par.timesteps; j++) {
+                for (var i = 0; i < par.modes.length; i++) {
+                    for (var j = startTimeStep; j <= endTimeStep; j++) {
                         var v = value.vol[i][j];
                         if (v > 0) {
                             var dbKey = key + ':' + j + ':' + par.modes[i] + ':' + iter;
@@ -815,6 +858,8 @@ if (cluster.isMaster) {
         else if (message = "linkupdate") {  //update one link for all time steps
             var link = '';
             var cnt = 0;
+            var tollStream = fs.createWriteStream(logTollFile, { 'flags': 'a' });
+
             iter = parseInt(iter);
             async.during(
                 //test function
@@ -836,21 +881,22 @@ if (cluster.isMaster) {
                     });
                     redisClient.publish('job_status', 'bar_tick:8');
                 },
-                function (callback) {
-                    var vol = [];                  
+                function (callback) {                  
+                    var vol = []; 
+                    var stepSize = 0;
                     multi = redisClient.multi();
                     multi.select(2);
                     async.series([
                         //MSA Volume
                         function (callback) {
-                            var i = 0;
+                            var i = startTimeStep - 1;
                             var tempvol = 0;
                             async.during(   //loop time steps
                                 function (callback) {
                                     i = i + 1;
-                                    return callback(null, i <= par.timesteps);
+                                    return callback(null, i <= endTimeStep);
                                 },
-                                function (callback) { 
+                                function (callback) {                                  
                                     tempvol = 0;
                                     async.eachSeries(par.modes,
                                         function (md, callback) {   //loop modes
@@ -859,7 +905,7 @@ if (cluster.isMaster) {
                                             var key2 = link + ":" + i + ":" + md + ":" + lastIter;  
                                             //weight factor for MSA
                                             var d = par.weightmsa;
-                                            var stepSize = 0;
+                                            
                                             if (d == 0) {
                                                 stepSize = 1 / iter;
                                             } else if (d == 1) {
@@ -879,9 +925,11 @@ if (cluster.isMaster) {
                                             });                                                                                                                   
                                         },
                                         function (err, result) { //end loop modes                                            
-                                                vol.push(tempvol);
-                                                //logger.debug(`[${process.pid}] ` + 'iter=' + iter + ' MSA vol tStep=' + i + ' link=' + link + ' vol=' + tempvol);
-                                                callback();
+                                            vol.push(tempvol);
+                                            //if (iter == 5 && i == 65) {
+                                            //    logger.debug(`[${process.pid}] ` + 'iter=' + iter + ' MSA vol tStep=' + i + ' link=' + link + ' vol=' + tempvol);
+                                            //}
+                                            callback();
                                         });
                                 },
                                 function (err) {                                 
@@ -900,17 +948,17 @@ if (cluster.isMaster) {
                             async.series([
                                 //set congested time to redis
                                 function (callback) {
-                                    for (var i = 1; i <= par.timesteps; i++) {
-                                        if (vol[i - 1] != null) {   //no traffic
-                                            var cgTime = lnk.fftime[i] * (1 + lnk.alpha * math.pow(vol[i - 1] * 4 / lnk.cap, lnk.beta));
-                                            vht.push(vol[i - 1] * cgTime / 60);
+                                    for (var i = startTimeStep; i <= endTimeStep; i++) {
+                                        if (vol[i - startTimeStep] != null) {   //no traffic
+                                            var cgTime = lnk.fftime[i] * (1 + lnk.alpha * math.pow(vol[i - startTimeStep] * 4 / lnk.cap, lnk.beta));
+                                            vht.push(vol[i - startTimeStep] * cgTime / 60);
                                         } else {
                                             var cgTime = lnk.time[i];
                                             vht.push(0);
                                         }
                                         //logger.debug(`[${process.pid}] ` + 'iter=' + iter + ' update time ' + link + ':' + i + ' vol=' + vol[i - 1] + ' time=' + cgTime);
                                         multi.select(3);
-                                        multi.set(link + ':' + i, cgTime + ',' + vol[i - 1]);                                      
+                                        multi.set(link + ':' + i, cgTime + ',' + vol[i - startTimeStep]);                                      
                                     }
                                     multi.exec(function (err, result) {
                                         callback();
@@ -918,9 +966,9 @@ if (cluster.isMaster) {
                                 },
                                 //set vht to redis
                                 function (callback) {
-                                    for (var i = 1; i <= par.timesteps; i++) {
+                                    for (var i = startTimeStep; i <= endTimeStep; i++) {
                                         multi.select(4);
-                                        multi.getset(link + ':' + i, vht[i - 1], function (err, result) {
+                                        multi.getset(link + ':' + i, vht[i - startTimeStep], function (err, result) {
                                             if (result != null) {
                                                 vhtPre.push(parseFloat(result));
                                             } else {
@@ -934,11 +982,11 @@ if (cluster.isMaster) {
                                 },
                                 //set vht diff to redis
                                 function (callback) {
-                                    for (var i = 1; i <= par.timesteps; i++) {
+                                    for (var i = startTimeStep; i <= endTimeStep; i++) {
                                         multi.select(10);
-                                        var diff = math.round(vht[i - 1] - vhtPre[i - 1],4);
-                                        //logger.info(`[${process.pid}]` + ' iter' + iter + ' link=' + link + ' vht=' + vht[i - 1] + ' vhtPre=' + vhtPre[i - 1] + ' diff=' + diff);
-                                        multi.RPUSH('vht' + i, vht[i - 1] + ',' + diff, function (err, result) {
+                                        var diff = math.round(vht[i - startTimeStep] - vhtPre[i - startTimeStep],4);
+                                        //logger.info(`[${process.pid}]` + ' iter' + iter + ' ts=' + i + ' link=' + link + ' vht=' + vht[i - startTimeStep] + ' vhtPre=' + vhtPre[i - startTimeStep] + ' diff=' + diff);
+                                        multi.RPUSH('vht' + i, vht[i - startTimeStep] + ',' + diff, function (err, result) {
 
                                         });
                                     }
@@ -953,27 +1001,34 @@ if (cluster.isMaster) {
                         function(callback){
                             //update toll
                             var lnk = allLinks.get(link);
-                            if (lnk.tolltype == par.tolltype.dynamic) {    //EL
+                            if (lnk.tolltype == par.tolltype.dynamic) {    //EL toll link
                                 multi.select(7);
                                 var toll = [];
-                                var arrTollLog = [[]];
-                                for (var i = 1; i <= par.timesteps; i++) {
-                                    var vc = vol[i - 1] * 4 / lnk.cap;
-                                    var toll = par.tollpolicy.mintoll + (par.tollpolicy.maxtoll - par.tollpolicy.mintoll) * math.pow(vc, par.tollpolicy.exp);
-                                    toll = math.round(math.min(toll, par.tollpolicy.maxtoll), 2);
-                                    multi.set(link + ':' + i, toll); 
-                                    //logger.info(`[${process.pid}]` + ' iter' + iter + ' update toll link=' + link + ' tStep=' + i + ' vol=' + vol[i-1] + ' vc=' + vc + ' toll=' + toll);
-                                    if (par.log.toll == 1) {                                        
-                                        arrTollLog.push([iter, i, lnk.aNd.id, lnk.bNd.id, math.round(vol[i - 1], 2), lnk.cap, math.round(vc, 2), toll, par.tollpolicy.exp,
-                                            par.tollpolicy.mintoll, par.tollpolicy.maxtoll]);
-                                    }                                    
-                                }
-                                multi.exec(function (err, result) {
-                                    if (par.log.toll == 1) {
-                                        csv.writeToStream(fs.createWriteStream(logTollFile, {'flags': 'a'}), arrTollLog, { headers: true })
-                                    }
-                                    callback();
-                                });
+                                var i = startTimeStep - 1;
+                                async.during(   //loop time steps
+                                    function (callback) {
+                                        i = i + 1;
+                                        return callback(null, i <= endTimeStep);
+                                    },
+                                    function (callback) {
+                                        var vc = vol[i - startTimeStep] * 4 / lnk.cap;
+                                        var toll = par.tollpolicy.mintoll + (par.tollpolicy.maxtoll - par.tollpolicy.mintoll) * math.pow(vc, par.tollpolicy.exp);
+                                        toll = math.round(math.min(toll, par.tollpolicy.maxtoll), 2);
+                                        //MSA toll
+                                        scriptManager.run('msa_toll', [link + ':' + i, toll, stepSize], [], function (err, result) {
+                                            //logger.info(`[${process.pid}]` + ' iter' + iter + ' err=' + err + ' toll=' + result);
+                                            var t = result.split(',');
+                                            if (par.log.toll == 1) {
+                                                tollStream.write(iter + ',' + i + ',' + lnk.aNd.id + ',' + lnk.bNd.id + ',' + math.round(vol[i - startTimeStep], 2) + ',' +
+                                                    lnk.cap + ',' + math.round(vc, 2) + ',' + toll + ',' + t[1] + ',' + par.tollpolicy.exp + ',' + par.tollpolicy.mintoll + ',' +
+                                                    par.tollpolicy.maxtoll + os.EOL);
+                                            }
+                                            callback();
+                                        });
+                                    },
+                                    function (err) {
+                                        callback();
+                                    });  //end loop time steps                                
                             } else {
                                 callback();
                             }
@@ -981,11 +1036,11 @@ if (cluster.isMaster) {
                         function (err, result) {
                             cnt = cnt + 1;
                             callback();
-                        });
-                   
+                        });                  
                 },
                 //whilst callback
                 function (err) {
+                    tollStream.end();
                     logger.info(`[${process.pid}]` + ' iter' + iter + ' link update processed total of ' + cnt);
                 });
         }
