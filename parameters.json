@@ -5,7 +5,7 @@
   "nodefilename": "nodes.csv",
   "triptablefilename": "triptable.CSV",
   "modes": [ "SOV" ],
-  "maxiter": 50,
+  "maxiter": 100,
   "gap": 0.01,
   "timestepgap": 0.01,
   "weightmsa": 1,
