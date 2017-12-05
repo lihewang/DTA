@@ -38,7 +38,7 @@ fs.truncate('worker.log', 0, function () {
 //Desktop deployment
 var redisIP = "redis://127.0.0.1:6379";
 var appFolder = "./app";
-var paraFile = appFolder + "/parameters.json";
+var paraFile = appFolder + "/parameters_95.json";
 var outsetFile = "./output/vol.csv"
 var redisClient = new redis(redisIP); 
 var redisJob = new redis(redisIP); 
@@ -229,7 +229,7 @@ var model_Loop = function () {
         function (callback) {
             //delete vht list
             redisClient.select(10);
-            redisClient.flushdb();
+            redisClient.flushdb();           
             callback();
         },
         //create shortest paths for all time steps and modes               
@@ -241,7 +241,10 @@ var model_Loop = function () {
             par.modes.forEach(function (md) {   //loop modes
                 for (var i = startTimeStep; i <= endTimeStep; i++) {  //loop time steps
                     for (var j = 1; j <= par.zonenum; j++) {
-                        multi.rpush('task', iter + ',' + i + ',' + j + ',' + md);   //iter-timestep-zone-mode
+                        multi.rpush('task', iter + ',' + i + ',' + j + ',' + md);   //iter,timestep,zone,mode
+                        if (iter == 3 && i == 1) {
+                            logger.info('iter' + iter + ' create spmv tasks' + iter + ',' + i + ',' + j + ',' + md);
+                        }
                         spmvNum = spmvNum + 1;
                     }
                 }
@@ -336,7 +339,7 @@ redisJob.on("message", function (channel, message) {
                     var cntVHT = 0;
                     var arrvht = [];
                     var arrTs = [];
-                    for (var i = startTimeStep; i <= endTimeStep; i++) {
+                    for (var i = 0; i < par.timesteps; i++) {
                         arrTs.push(i);
                     }
                     async.each(arrTs,
@@ -352,7 +355,7 @@ redisJob.on("message", function (channel, message) {
                                     vht_tot = vht_tot + parseFloat(v[0]);
                                     vht_square = vht_square + math.pow(parseFloat(v[1]), 2);
                                     //if (ts == 71) {
-                                    //    logger.info('iter' + iter + ' timestep=' + ts + ' vht=' + v[0] + ' vht_diff=' + v[1]);
+                                        //logger.info('iter' + iter + ' timestep=' + ts + ' vht=' + v[0] + ' vht_diff=' + v[1]);
                                     //}
                                 });
                                 if (arrvht.length != 0) {
@@ -370,8 +373,8 @@ redisJob.on("message", function (channel, message) {
                                     gap.push(0);
                                 }
                                 //if (ts == 71) {
-                                //    logger.info('iter' + iter + ' timestep=' + ts + ' gap=' + gp + ' vht_square=' + math.round(vht_square, 0)
-                                //        + ' vht_tot=' + math.round(vht_tot, 0) + ' arrvht length=' + arrvht.length);
+                                    //logger.info('iter' + iter + ' timestep=' + ts + ' gap=' + gp + ' vht_square=' + math.round(vht_square, 0)
+                                    //    + ' vht_tot=' + math.round(vht_tot, 0) + ' arrvht length=' + arrvht.length);
                                 //}
                                 callback();                                  
                             });                           
@@ -382,19 +385,19 @@ redisJob.on("message", function (channel, message) {
                             for (var i = 0; i < arrCvgLog.length; i++) {
                                 //logger.info('iter' + iter + ' ts=' + arrCvgLog[i][1]);
                                 if (arrCvgLog[i][2] >= par.timestepgap) {
-                                    startTimeStep = arrCvgLog[i][1];
+                                    startTimeStep = arrCvgLog[i][1] + 1;
                                     break;
                                 }                                
                             }
                             for (var i = arrCvgLog.length - 1; i >= 0; i--) {
-                                var ts = arrCvgLog[i][1];
+                                var ts = arrCvgLog[i][1] + 1;
                                 if (arrCvgLog[i][2] >= par.timestepgap) {
                                     endTimeStep = ts
                                     break;
                                 }
                             }
                             for (var i = 0; i < arrCvgLog.length; i++) {
-                                cvgStream.write(arrCvgLog[i][0] + ',' + arrCvgLog[i][1] + ',' + arrCvgLog[i][2] + os.EOL);
+                                cvgStream.write(arrCvgLog[i][0] + ',' + (arrCvgLog[i][1] + 1) + ',' + arrCvgLog[i][2] + os.EOL);
                             }                                                     
                             logger.info('iter' + iter + ' gap=' + maxGap + ', next iter start ts=' + startTimeStep + ', end ts=' + endTimeStep);
                          }

@@ -37,7 +37,7 @@ var pathStream = null;
 
 var redisIP = "redis://127.0.0.1:6379";
 var appFolder = "./app";
-var paraFile = appFolder + "/parameters.json";
+var paraFile = appFolder + "/parameters_95.json";
 var luaScript_msa = appFolder + '/msa.lua';
 var luaScript_msa_toll = appFolder + '/msa_toll.lua';
 
@@ -52,7 +52,7 @@ var logTollFile = './output' + '/' + par.log.tollfilename;
 
 //load redis lua script
 var scriptManager = new Scripto(redisClient);
-scriptManager.loadFromFile('msa_toll', luaScript_msa_toll);
+//scriptManager.loadFromFile('msa_toll', luaScript_msa_toll);
 
 //********node reader********
 var rdnd = function Readcsv(callback) {
@@ -96,11 +96,10 @@ var rdlnk = function Readcsv(callback) {
             for (var i = 1; i <= par.timesteps; i++) {
                 arrTime.push(parseFloat(data['TIME']));
                 arrffTime.push(parseFloat(data['TIME']));
-                arrToll.push(parseFloat(data['TOLL']));
-                arrLink.push(a + '-' + b + ':' + i);
-                if (parseInt(data['TOLLTYPE']) == 1) {
-                    arrTollLink.push(a + '-' + b + ':' + i);
-                }
+                arrToll.push(parseFloat(data['TOLL']));                              
+            }           
+            if (parseInt(data['TOLLTYPE']) == 1) {
+                arrTollLink.push(a + '-' + b);
             }
             var aNode = allNodes.get(parseInt(data['A']));
             var bNode = allNodes.get(parseInt(data['B']));
@@ -154,6 +153,7 @@ var initLink = function init_links(callback) {
             arrVol.push(jarr);
         }
         value.vol = arrVol;
+        arrLink.push(key); 
     });
     callback(null, "init links");
 }
@@ -348,9 +348,9 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, zj, call
                                     pq[index].pqindex = index;
                                     //logger.debug(`[${process.pid}]` + ' bubble up switch after=' + pq[parentIndex].id + ',' + pq[index].id);
                                     index = parentIndex;
-                                    if (index > pq.length - 1) {
-                                        logger.debug(`[${process.pid}]` + ' 354 pq index error! zone=' + zone + ' zj=' + zj + ' pathType=' + pathType + ' index=' + index + ' pq length=' + pq.length + ' dnNode=' + dnNode.id)
-                                    }
+                                    //if (index > pq.length - 1) {
+                                    //    logger.debug(`[${process.pid}]` + ' 354 pq index error! zone=' + zone + ' zj=' + zj + ' pathType=' + pathType + ' index=' + index + ' pq length=' + pq.length + ' dnNode=' + dnNode.id)
+                                    //}
                                     parentIndex = math.floor((index + 1) / 2 - 1);                                   
                                 } else {
                                     break;
@@ -394,10 +394,7 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, zj, call
                             var link = path[j][2];
                             skimDist = skimDist + parseFloat(link.dist);
                             if (link.tolltype == par.tolltype.dynamic || link.tolltype == par.tolltype.fix) {
-                                skimToll = skimToll + link.toll[tp];            //including EL and fixed toll
-                                //if (link.aNd.id == '31151') {
-                                //    logger.debug(`[${process.pid}]` + ' Iter' + iter + ' tp=' + tp + ' link=' + link.aNd.id + '-' + link.bNd.id + ' toll=' + link.toll[tp]);
-                                //}
+                                skimToll = skimToll + link.toll[tp];            //including EL and fixed toll                                
                             }
                             skimFFtime = skimFFtime + link.fftime[tp];
                         }
@@ -435,8 +432,8 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, zj, call
 
 //********move vehicle********
 var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, zint, tsint, callback) {
-    //if (zi == 1) {
-        //logger.debug(`[${process.pid}]` + ' ****iter ' + iter + ' mv start ' + zi + '-' + zj + ':' + tp + ':' + mode + ':' + pthTp + ' vol=' + vol + ' path ' + path.length);
+    //if (tp == 96) {
+    //    logger.debug(`[${process.pid}]` + ' ****iter ' + iter + ' mv start ' + zi + '-' + zj + ':' + tp + ':' + mode + ':' + pthTp + ' vol=' + vol + ' path ' + path.length);
     //}
     if (path == null) {
         callback(null, zi + '-' + zj + ':' + tp + ':' + mode);
@@ -444,7 +441,7 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, zint, ts
         var totTime = 0;
         var tpNew = tp;
         var keyValue = '';
-        var j = 0;
+        var firstNode = true; 
         var breakloop = false;
         var modenum = 0;
         for (var i = 0; i <= par.modes.length - 1; i++){
@@ -464,10 +461,9 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, zint, ts
         }
         //loop links in the path
         var pathItem = pathCopy.pop();
-        while (pathItem != null && !breakloop){
+        while (pathItem != null && !breakloop) {
             var aNode = pathItem[0];
-            //logger.debug(`[${process.pid}]` + ' iter' + iter + ' mv link loop' + j + ' currnode=' + pathItem[0].id + ', zonepair=' + zi + "-" + zj + ',vol=' + vol + ' mode=' + mode + ' aNodeType=' + aNode.type);               
-            if (aNode.type == par.dcpnttype && j > 0 && mode == "SOV" && vol >= par.minpacketsize) {
+            if (aNode.type == par.dcpnttype && (!firstNode) && mode == "SOV" && vol >= par.minpacketsize) {
                 //**decision point (not the start node in path)**
                 var ptype = ['tl', 'tf'];
                 var time = [0, 0]; 
@@ -569,7 +565,7 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, zint, ts
                     if (splitVol[i] > 0) {
                         mvTasks.push(aNode.id + ':' + zj + ':' + splitVol[i] + ':' + ptype[i] + ':' + tpNew + ':' + zint + ':' + tsint);
                         cntPackets = cntPackets + 1;
-                        //if (aNode.id == 16 && tpNew == 2) {
+                        //if (iter == 2) {
                         //    logger.debug(`[${process.pid}]` + ' iter' + iter + ' add task ' + aNode.id + ':' + zj + ':' + splitVol[i] + ':' + ptype[i] + ':' + tpNew + ' cntPackets=' + cntPackets);
                         //}
                     }
@@ -579,7 +575,7 @@ var mv = function MoveVehicle(tp, zi, zj, pthTp, mode, vol, path, iter, zint, ts
             } else {  
                 //not decision point
                 pathItem[2].vol[modenum][pathItem[4]] = pathItem[2].vol[modenum][pathItem[4]] + vol;
-                j = j + 1;
+                firstNode = false;
                 var paths = par.log.path.split(',');     // zi,zj,timestep          
                 if (parseInt(paths[0]) == zint && parseInt(paths[1]) == zj && parseInt(paths[2]) == tsint) {
                     pathStream.write(iter + ',' + tpNew + ',' + pathItem[0].id + ',' + pathItem[1].id + ',' + vol + os.EOL);
@@ -684,21 +680,22 @@ if (cluster.isMaster) {
                         iter = parseInt(result);
                         if (iter >= 2) {  //iter>=2           
                             redisClient.select(3);
-                            redisClient.mget(arrLink, function (err, result) {
-                                for (var i = 0; i < result.length; i++) {
-                                    var linkid = arrLink[i].split(':')[0];
-                                    var tp = arrLink[i].split(':')[1];
-                                    var time = parseFloat(result[i].split(',')[0]);
-                                    var volmsa = parseFloat(result[i].split(',')[1]);
+                            async.each(arrLink, function (linkid, callback) {
+                                redisClient.get(linkid, function (err, result) {                                   
                                     var link = allLinks.get(linkid);
-                                    link.time[tp] = time;
-                                    link.volmsa[tp] = volmsa;
-                                    //if (iter == 6 && (tp == 64 || tp == 65)) {
-                                    //    logger.info(`[${process.pid}]` + ' iter' + iter + ' tp=' + tp + ' link=' + arrLink[i] + ' volmsa=' + volmsa + ' time=' + link.time[tp]);
-                                    //}
-                                }
+                                    var arrResult = result.split(':');
+                                    //logger.info(`[${process.pid}]` + ' iter' + iter + ' link=' + linkid + ' result=' + arrResult.length);
+                                    for (var j = 0; j < par.timesteps; j++) {
+                                        var time = parseFloat(arrResult[j].split(',')[0]);
+                                        var volmsa = parseFloat(arrResult[j].split(',')[1]);
+                                        link.time[j + 1] = time;
+                                        link.volmsa[j + 1] = volmsa;
+                                    }
+                                    callback();
+                                });
+                            }, function (err) {
                                 callback();
-                            });
+                            });                           
                         } else {
                             callback();
                         }
@@ -712,23 +709,19 @@ if (cluster.isMaster) {
                         if (iter >= 2) {  //iter>=2
                             var i = 0;
                             redisClient.select(7);
-                            redisClient.mget(arrTollLink, function (err, result) {
-                                async.during(function (callback) {
-                                    return callback(null, i < arrTollLink.length);
-                                },
-                                    function (callback) {
-                                        var link = allLinks.get(arrTollLink[i].split(':')[0]);
-                                        var tp = arrTollLink[i].split(':')[1];
-                                        link.toll[tp] = parseFloat(result[i]);
-                                        //logger.info(`[${process.pid}]` + ' iter' + iter + ' tp=' + tp + ' copy toll ' + arrTollLink[i] + ' toll=' + link.toll[tp]);
-                                        i = i + 1;
-                                        callback();
-                                    },
-                                    function (err) {
-                                        callback();
+                            async.each(arrTollLink, function (linkid, callback) {
+                                var link = allLinks.get(linkid);
+                                redisClient.get(linkid, function (err, result) {
+                                    var arrResult = result.split(',');
+                                    //logger.info(`[${process.pid}]` + ' iter' + iter + ' link=' + linkid + ' result=' + arrResult.length);
+                                    for (var j = 0; j < par.timesteps; j++) {
+                                        link.toll[j + 1] = parseFloat(arrResult[j]);;
                                     }
-                                );
-                            });
+                                    callback();
+                                })                                
+                            }, function (err) {
+                                callback();
+                            });                                            
                         } else {
                             callback();
                         }
@@ -758,8 +751,7 @@ if (cluster.isMaster) {
                                     timeStep = tsk[1];
                                     spZone = tsk[2];
                                     mode = tsk[3];
-                                    pathType = 'ct';    //cost time
-                                    //logger.info(`[${process.pid}]` + ' iter' + iter + ' get task from db ' + result);
+                                    pathType = 'ct';    //cost time                                    
                                 }
                                 redisClient.publish('job_status', 'bar_tick:6');
                                 return callback(null, result != null);
@@ -844,15 +836,14 @@ if (cluster.isMaster) {
         else if (message == 'linkvolredis') {
             //write vol to redis
             redisClient.select(2);
-            var links = allLinks.keys();
             var i = 0;           
             async.during(
                 function (callback) {                   
-                    return callback(null, links.length > 0);
+                    return callback(null, arrLink.length > 0);
                 },
                 function (callback) {
-                    var key = links[i] + ':' + iter;
-                    var lnk = allLinks.get(links[i]);
+                    var key = arrLink[i] + ':' + iter;
+                    var lnk = allLinks.get(arrLink[i]);
                     var strVol = '';
                     redisClient.getset(key, 'lock', function (err, result) {
                         if (result != 'lock') {
@@ -873,7 +864,8 @@ if (cluster.isMaster) {
                                             }
                                         }
                                     }
-                                }                                
+                                } 
+                                
                             } else {
                                 var vp = result.split(',');
                                 var index = 0;
@@ -894,22 +886,20 @@ if (cluster.isMaster) {
                                         }
                                         index = index + 1;
                                     }
-                                }                               
+                                } 
+                                
                             }
                             redisClient.set(key, strVol, function (err, result) {
-                                //if (key == '1-11:1') {
-                                //    logger.info(`[${process.pid}]` + ' iter' + iter + ' set vol key=' + key + ' vol=' + strVol);
-                                //}
-                                links.splice(i, 1);
+                                arrLink.splice(i, 1);
                                 i = i + 1;
-                                if (i >= links.length) {
+                                if (i >= arrLink.length) {
                                     i = 0;
                                 }
                                 callback();
                             });
                         } else {
                             i = i + 1;
-                            if (i >= links.length) {
+                            if (i >= arrLink.length) {
                                 i = 0;
                             }
                             callback();
@@ -918,7 +908,7 @@ if (cluster.isMaster) {
                 },
                 function (err) {
                     redisClient.incr('cntNode', function (err, result) {
-                        if (parseInt(result) == par.numprocesses) {
+                        if (parseInt(result) == par.numprocesses) {                           
                             logger.info(`[${process.pid}]` + ' iter' + iter + ' --- write vol to redis done --- ');
                             redisClient.publish('job_status', 'sp_mv_done');
                         }
@@ -978,22 +968,23 @@ if (cluster.isMaster) {
                                 var lastIter = iter - 1;
                                 var key1 = link + ":" + iter;
                                 var key2 = link + ":" + lastIter;
-                                redisClient.mget(key1, key2, function (err, result) {  
-                                    var arrV_pre = result[0].split(',');
-                                    var arrV_cur = result[1].split(',');
-                                    var numMode = par.modes.length;
-                                    var strVol = '';
-                                    for (var i = 0; i <= par.timesteps * par.modes.length - 1; i++) {
-                                        var msaVol = parseFloat(arrV_pre[i]) * (1 - stepSize) + parseFloat(arrV_cur[i]) * stepSize;
-                                        if (strVol = '') {
-                                            strVol = msaVol.toString();
-                                        } else {
-                                            strVol = strVol + ',' + msaVol.toString();
+                                redisClient.get(key1, function (err, result) {
+                                    var arrV_cur = result.split(',');
+                                    redisClient.get(key2, function (err, result) {
+                                        var arrV_pre = result.split(',');
+                                        var strVol = '';
+                                        for (var i = 0; i <= par.timesteps * par.modes.length - 1; i++) {
+                                            var msaVol = parseFloat(arrV_pre[i]) * (1 - stepSize) + parseFloat(arrV_cur[i]) * stepSize;
+                                            if (strVol == '') {
+                                                strVol = msaVol.toString();
+                                            } else {
+                                                strVol = strVol + ',' + msaVol.toString();
+                                            }
+                                            volMode.push(msaVol);                                           
                                         }
-                                        volMode.push(msaVol);
-                                    }
-                                    redisClient.set(key1, strVol, function (err, result) {
-                                        callback();
+                                        redisClient.set(key1, strVol, function (err, result) {
+                                            callback();
+                                        });
                                     });
                                 });
                             } else {
@@ -1010,21 +1001,22 @@ if (cluster.isMaster) {
                         function (callback) {
                             var lnk = allLinks.get(link);
                             var vht = [];
-                            var vhtPre = [];    
-                            //logger.debug(`[${process.pid}] ` + 'iter=' + iter + ' update time ' + link + ' volMode=' + volMode.length);
+                            var vhtPre = [];   
                             for (var i = 0; i <= par.timesteps - 1; i++) {
                                 var tVol = 0;
                                 for (var j = 0; j < par.modes.length; j++) {
                                     tVol = tVol + parseFloat(volMode[i + par.timesteps * j]);
                                 }
                                 vol.push(tVol);
-                                //logger.debug(`[${process.pid}] ` + 'iter=' + iter + ' update time ' + link + ':' + i + ' vol=' + tVol);
+                                //if (iter == 3 && link == '1-11') {
+                                //    logger.debug(`[${process.pid}] ` + 'iter=' + iter + ' update time ' + link + ':' + i + ' vol=' + tVol);
+                                //}
                             }                            
                             async.series([
                                 //set congested time to redis
                                 function (callback) {
-                                    var multi = redisClient.multi();
-                                    multi.select(3);
+                                    redisClient.select(3);
+                                    var strTemp = '';
                                     for (var i = 0; i <= par.timesteps - 1; i++) {
                                         if (vol[i] != null) {   //no traffic
                                             var cgTime = lnk.fftime[i] * (1 + lnk.alpha * math.pow(vol[i] * 4 / lnk.cap, lnk.beta));
@@ -1033,19 +1025,26 @@ if (cluster.isMaster) {
                                             var cgTime = lnk.time[i];
                                             vht.push(0);
                                         }
-                                        //logger.debug(`[${process.pid}] ` + 'iter=' + iter + ' update time ' + link + ':' + i + ' vol=' + vol[i - startTimeStep] + ' time=' + cgTime);                                       
-                                        multi.set(link + ':' + i, cgTime + ',' + vol[i]);
+                                        if (strTemp == '') {
+                                            strTemp = cgTime + ',' + vol[i];
+                                        } else {
+                                            strTemp = strTemp + ':' + cgTime + ',' + vol[i];
+                                        }
+                                                                                                                   
                                     }
-                                    multi.exec(function (err, result) {
+                                    redisClient.set(link, strTemp, function (err, result) {
+                                        //if (link == '11-13') {
+                                        //    logger.debug(`[${process.pid}] ` + 'iter=' + iter + ' update time ' + link + ' time,vol=' + strTemp);  
+                                        //}
                                         callback();
-                                    });
+                                    });                                    
                                 },
                                 //set vht to redis
                                 function (callback) {
                                     var multi = redisClient.multi();
                                     var lnktime = [];
                                     //logger.debug(`[${process.pid}] ` + 'iter=' + iter + ' stime=' + startTimeStep + ' etime=' + endTimeStep);
-                                    for (var i = 1; i <= par.timesteps; i++) {
+                                    for (var i = 0; i < par.timesteps; i++) {
                                         lnktime.push(link + ':' + i);
                                     }
                                     async.series([
@@ -1086,11 +1085,11 @@ if (cluster.isMaster) {
                                     multi.select(10);
                                     for (var i = 0; i < par.timesteps; i++) {                                       
                                         var diff = math.round(vht[i] - vhtPre[i], 4);
-                                        //if (iter > 0) {
-                                        //    logger.info(`[${process.pid}]` + ' iter' + iter + ' index=' + (i - startTimeStep) + ' link=' + link + ' vht=' +
-                                        //        vht[i - startTimeStep] + ' vhtPre=' + vhtPre[i - startTimeStep] + ' diff=' + diff);
+                                        //if (iter == 3 && link == '1-11') {
+                                        //    logger.info(`[${process.pid}]` + ' iter' + iter + ' ts=' + i + ' link=' + link + ' vht=' +
+                                        //        vht[i] + ' vhtPre=' + vhtPre[i] + ' diff=' + diff);
                                         //}
-                                        multi.rpush('vht' + (i + 1), vht[i] + ',' + diff, function (err, result) {
+                                        multi.rpush('vht' + i, vht[i] + ',' + diff, function (err, result) {
 
                                         });
                                     }
