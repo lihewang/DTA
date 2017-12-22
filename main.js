@@ -14,7 +14,8 @@ var events = require('events');
 var log4js = require('log4js');
 var progressBar = require('progress');
 var os = require('os');
-
+var appFolder = "./app";
+var paraFile = appFolder + "/parameters_95.json";
 log4js.configure({
     appenders: {
         everything: { type: 'file', filename: 'main.log', backups: 1 },
@@ -37,8 +38,7 @@ fs.truncate('worker.log', 0, function () {
 
 //Desktop deployment
 var redisIP = "redis://127.0.0.1:6379";
-var appFolder = "./app";
-var paraFile = appFolder + "/parameters_95.json";
+
 var outsetFile = "./output/vol.csv"
 var redisClient = new redis(redisIP); 
 var redisJob = new redis(redisIP); 
@@ -111,7 +111,7 @@ async.series([
         var logCvgFile = './output' + '/' + par.log.convergefilename;
         fs.unlink(logCvgFile, function (err, result) { 
             cvgStream = fs.createWriteStream(logCvgFile);
-            cvgStream.write("iter, tStep, RgapVHT" + os.EOL);
+            cvgStream.write("iter, tStep, GAP_VOL, RMSE_VHT" + os.EOL);
             callback();
         });
     },
@@ -120,7 +120,7 @@ async.series([
         var logPathFile = './output' + '/' + par.log.pathfilename;
         fs.unlink(logPathFile, function (err, result) {
             pathStream = fs.createWriteStream(logPathFile, { 'flags': 'a' });
-            pathStream.write("iter, tStep, A, B, Vol" + os.EOL);
+            pathStream.write("A, B, Vol, iter, tStep, Mode" + os.EOL);
             callback();
         });
     },
@@ -129,7 +129,12 @@ async.series([
         var logvolFile = './output' + '/' + 'vol.csv';
         fs.unlink(logvolFile, function (err, result) {
             volStream = fs.createWriteStream(logvolFile, { 'flags': 'a' });
-            volStream.write("iter, A, B, tp, mode, vol" + os.EOL);
+            var s = 'A,B,TIMESTEP';
+            for (var j = 0; j < par.modes.length; j++) {
+                s = s + ',' + par.modes[j];
+            }
+            s = s + ',speed,toll';
+            volStream.write(s + os.EOL);
             callback();
         });
     },
@@ -328,10 +333,11 @@ redisJob.on("message", function (channel, message) {
         }); 
     } else if (message == 'linkupdate_done') {
         logger.info('iter' + iter + ' link update done');
-        var gap = [];
-        gap.push(0);
+        //var gap = [];
+        //gap.push(0);
         var arrCvgLog = [];        
         var maxGap = 0;
+        var maxRMSE = 0;
         if (iter == 1) {
             maxGap = 99;
         }
@@ -352,11 +358,15 @@ redisJob.on("message", function (channel, message) {
                             redisClient.lrange('vht' + ts, '0', '-1', function (err, result) {  
                                 var vht_tot = 0;
                                 var vht_square = 0;
+                                var vol_tot = 0;
+                                var vol_totdiff = 0;
                                 arrvht = result;
                                 arrvht.forEach(function (vht) {
                                     var v = vht.split(',');
                                     vht_tot = vht_tot + parseFloat(v[0]);
                                     vht_square = vht_square + math.pow(parseFloat(v[1]), 2);
+                                    vol_tot = vol_tot + parseFloat(v[2]);
+                                    vol_totdiff = vol_totdiff + parseFloat(v[3]);
                                     //if (ts == 0) {
                                     //    logger.info('iter' + iter + ' timestep=' + ts + ' vht=' + v[0] + ' vht_diff=' + v[1]);
                                     //}
@@ -364,16 +374,19 @@ redisJob.on("message", function (channel, message) {
                                 if (arrvht.length != 0) {
                                     if (vht_tot == 0) {
                                         var gp = 0;
+                                        var rmse = 0;
                                     } else {
-                                        var gp = math.pow((vht_square / arrvht.length), 0.5) / (vht_tot / arrvht.length);
+                                        var gp = vol_totdiff / vol_tot;
+                                        var rmse = math.pow((vht_square / arrvht.length), 0.5) / (vht_tot / arrvht.length);
                                     }
-                                    arrCvgLog.push([iter, ts, math.round(gp, 4)]);
-                                    //logger.info('iter' + iter + ' arrCvgLog add' + '[' + iter + ',' + ts + ',' + math.round(gp, 4) + ']');
-                                    gap.push(gp);
+                                    arrCvgLog.push([iter, ts, math.round(gp, 4), math.round(rmse, 4)]);
+                                    //logger.debug('iter' + iter + ' vol diff=' + vol_totdiff + ' vol tot=' + vol_tot);
+                                    //gap.push(rmse);
                                     maxGap = math.max(gp, maxGap);
+                                    maxRMSE = math.max(rmse, maxRMSE);
                                 } else {
-                                    arrCvgLog.push([iter, ts, 0]);
-                                    gap.push(0);
+                                    arrCvgLog.push([iter, ts, 0, 0]);
+                                    //gap.push(0);
                                 }
                                 //if (ts == 71) {
                                     //logger.info('iter' + iter + ' timestep=' + ts + ' gap=' + gp + ' vht_square=' + math.round(vht_square, 0)
@@ -402,9 +415,9 @@ redisJob.on("message", function (channel, message) {
                             startTimeStep = 1;
                             endTimeStep = par.timesteps
                             for (var i = 0; i < arrCvgLog.length; i++) {
-                                cvgStream.write(arrCvgLog[i][0] + ',' + (arrCvgLog[i][1] + 1) + ',' + arrCvgLog[i][2] + os.EOL);
+                                cvgStream.write(arrCvgLog[i][0] + ',' + (arrCvgLog[i][1] + 1) + ',' + arrCvgLog[i][2] + ',' + arrCvgLog[i][3] + os.EOL);
                             }                                                     
-                            logger.info('iter' + iter + ' gap=' + maxGap);
+                            logger.info('iter' + iter + ' RGAP=' + math.round(maxGap, 4) + ' VHT_RMSE=' + math.round(maxRMSE, 4));
                          }
                     );                    
                 } 
@@ -425,23 +438,38 @@ redisJob.on("message", function (channel, message) {
                     callback();
                 } else {
                     //write csv file                    
-                    async.series([                        
+                    async.series([
                         function (callback) {
                             redisClient.select(2);
                             redisClient.keys('*', function (err, results) {
-                                var multi = redisClient.multi();
-                                results.forEach(function (key) {
+                                async.eachSeries(results, function (key, callback) {
                                     var arrKey = key.split(':');
-                                    if (arrKey != 'cntNode' && parseInt(arrKey[3]) == iter) { //&& parseInt(arrKey[3]) == iter
+                                    //logger.info('iter' + iter + ' key=' + key);
+                                    if (arrKey != 'cntNode' && parseInt(arrKey[1]) == iter) { //&& parseInt(arrKey[3]) == iter
                                         var arrKey = key.split(":");
                                         var nd = arrKey[0].split('-');
                                         redisClient.get(key, function (err, result) {
-                                            volStream.write(arrKey[3] + ',' + nd[0] + ',' + nd[1] + ',' + arrKey[1] + ',' + arrKey[2] + ',' + math.round(result, 2) + os.EOL);
+                                            //logger.info('iter' + iter + ' key=' + key + ' result=' + result);
+                                            var modes = par.modes;
+                                            var v = result.split(',');
+                                            for (var j = 1; j <= par.timesteps; j++) {
+                                                var s = '';
+                                                for (var i = 0; i < modes.length; i++) {
+                                                    if (s == '') {
+                                                        s = v[i * par.timesteps + j - 1];
+                                                    } else {
+                                                        s = s + ',' + v[i * par.timesteps + j - 1];
+                                                    }
+                                                }
+                                                volStream.write(nd[0] + ',' + nd[1] + ',' + j + ',' + s + os.EOL);
+                                            }
+                                            callback();
                                         });
+                                    } else {
+                                        callback();
                                     }
-                                })
-                                multi.exec(function (err, result) {
-                                    logger.info('iter' + iter + ' write to vol file ' + result);
+                                }, function (err) {
+                                    logger.info('iter' + iter + ' write to vol file');
                                     callback();
                                 });
                             });
@@ -450,11 +478,12 @@ redisJob.on("message", function (channel, message) {
                             volStream.end();
                             cvgStream.end();
                             pathStream.end();
-                            redisClient.publish('job', 'end');
-                            logger.info('iter' + iter + ' end of program');
-                            process.exit(0); //End server
-                            callback(null, "End of program");
-                        }); 
+                            redisClient.publish('job', 'end', function (err, result) {
+                                logger.info('iter' + iter + ' end of program');
+                                process.exit(0); //End server
+                                callback(null, "End of program");
+                            });
+                        });
                 }
                 
             }],
