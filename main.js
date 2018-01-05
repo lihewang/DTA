@@ -14,8 +14,9 @@ var events = require('events');
 var log4js = require('log4js');
 var progressBar = require('progress');
 var os = require('os');
+
 var appFolder = "./app";
-var paraFile = appFolder + "/parameters_95.json";
+var paraFile = appFolder + "/parameters.json";
 log4js.configure({
     appenders: {
         everything: { type: 'file', filename: 'main.log', backups: 1 },
@@ -56,6 +57,7 @@ var eventEmitter = new events.EventEmitter();
 var bar = new progressBar('[:bar] [:percent]', { width: 80, total: 100 });
 var cvgStream = null;
 var pathStream = null;
+var LinkAttributes = new hashMap(); 
 
 //set global iter
 redisClient.select(9);
@@ -97,16 +99,6 @@ async.series([
         });       
     },
     function (callback) {
-        //create logChoice file
-        var logChoiceFile = './output' + '/' + par.log.dpnodefilename;
-        fs.unlink(logChoiceFile, function (err, result) {
-            var arrLog = [];
-            arrLog.push(["iter", "tStep", "dpID", "destID", "distTl", "distTf", "distMtPnt", "timeTl", "timeTf", "timeFFTl", "timeFFTf", "TollEL", "TollGP", "utility", "TlShare"]);
-            csv.writeToStream(fs.createWriteStream(logChoiceFile, { 'flags': 'a' }), arrLog, { headers: true });
-            callback();
-        });       
-    },
-    function (callback) {
         //create logConverge file
         var logCvgFile = './output' + '/' + par.log.convergefilename;
         fs.unlink(logCvgFile, function (err, result) { 
@@ -133,7 +125,7 @@ async.series([
             for (var j = 0; j < par.modes.length; j++) {
                 s = s + ',' + par.modes[j];
             }
-            s = s + ',speed,toll';
+            s = s + ',speed,toll,vc';
             volStream.write(s + os.EOL);
             callback();
         });
@@ -147,7 +139,7 @@ async.series([
                 id = id.trim();
             })
             .on("end", function (result) {
-                logger.info("read node total of " + result + " nodes");
+                logger.info("read nodes total of " + par.zonenum + " zones");
                 callback();
             });
         stream.pipe(csvStream);
@@ -164,6 +156,9 @@ async.series([
                 bnode = bnode.trim();
                 var data_id = anode + '-' + bnode;
                 arrLink.push(data_id);    //anode-bnode
+                LinkAttributes.set(data_id, {
+                    dist: parseFloat(data['Dist']), cap: parseFloat(data['Cap'])
+                });
                 //Check network for errors
                 var attributes = ['TIME', 'Dist', 'Spd', 'Cap', 'Ftype', 'TOLL', 'TOLLTYPE', 'Alpha', 'Beta'];
                 attributes.forEach(function (a) {
@@ -255,7 +250,7 @@ var model_Loop = function () {
                 }
             });
             multi.exec(function (err, result) {
-                logger.info('iter' + iter + ' set ' + spmvNum + ' sp tasks in redis');
+                logger.info('iter' + iter + ' set ' + spmvNum + ' single source shortest path tasks in redis');
                 callback();
             });
         },
@@ -444,10 +439,48 @@ redisJob.on("message", function (channel, message) {
                             redisClient.keys('*', function (err, results) {
                                 async.eachSeries(results, function (key, callback) {
                                     var arrKey = key.split(':');
+                                    var speed = [];
+                                    var vc = [];
+                                    var toll = [];
                                     //logger.info('iter' + iter + ' key=' + key);
                                     if (arrKey != 'cntNode' && parseInt(arrKey[1]) == iter) { //&& parseInt(arrKey[3]) == iter
                                         var arrKey = key.split(":");
                                         var nd = arrKey[0].split('-');
+                                        var link = LinkAttributes.get(arrKey[0]);
+                                        //get speed, vc
+                                        redisClient.select(3);
+                                        redisClient.get(arrKey[0], function (err, result) {
+                                            var arrResult = result.split(':');
+                                            //logger.info(`[${process.pid}]` + ' iter' + iter + ' link=' + linkid + ' result=' + arrResult.length);
+                                            speed.push(0);
+                                            vc.push(0);
+                                            for (var j = 0; j < par.timesteps; j++) {
+                                                var time = arrResult[j].split(',')[0];
+                                                if (time == 0) {
+                                                    speed.push(70); //ff speed
+                                                } else {
+                                                    speed.push(link.dist / time * 60);
+                                                }
+                                                var vol = arrResult[j].split(',')[1];
+                                                vc.push(vol * 4 / link.cap);
+                                            }
+                                        });
+                                        //get toll
+                                        redisClient.select(7);
+                                        redisClient.get(arrKey[0], function (err, result) {
+                                            toll.push(0);
+                                            if (result == null) {                                                
+                                                for (var j = 0; j < par.timesteps; j++) {
+                                                    toll.push(0);
+                                                }
+                                            } else {
+                                                var arrResult = result.split(',');
+                                                for (var j = 0; j < par.timesteps; j++) {
+                                                    toll.push(arrResult[j]);
+                                                }
+                                            }
+                                        });
+                                        redisClient.select(2);
                                         redisClient.get(key, function (err, result) {
                                             //logger.info('iter' + iter + ' key=' + key + ' result=' + result);
                                             var modes = par.modes;
@@ -461,7 +494,7 @@ redisJob.on("message", function (channel, message) {
                                                         s = s + ',' + v[i * par.timesteps + j - 1];
                                                     }
                                                 }
-                                                volStream.write(nd[0] + ',' + nd[1] + ',' + j + ',' + s + os.EOL);
+                                                volStream.write(nd[0] + ',' + nd[1] + ',' + j + ',' + s + ',' + speed[j] + ',' + toll[j] + ',' +vc[j] + os.EOL);
                                             }
                                             callback();
                                         });
