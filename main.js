@@ -16,7 +16,7 @@ var progressBar = require('progress');
 var os = require('os');
 
 var appFolder = "./app";
-var paraFile = appFolder + "/parameters.json";
+var paraFile = appFolder + "/parameters_sf.json";
 log4js.configure({
     appenders: {
         everything: { type: 'file', filename: 'main.log', backups: 1 },
