@@ -9,7 +9,6 @@ var fs = require('fs');
 var readline = require('readline');
 var csv = require('fast-csv');
 var hashMap = require('hashmap');
-var math = require('mathjs');
 var events = require('events');
 var log4js = require('log4js');
 var progressBar = require('progress');
@@ -33,9 +32,9 @@ process.stdout.write('\033c');  //clear console
 fs.truncate('main.log', 0, function () {
     logger.info('clear main log file');
 });
-fs.truncate('worker.log', 0, function () {
-    logger.info('clear worker log file');
-});
+//fs.truncate('worker.log', 0, function () {
+//    logger.info('clear worker log file');
+//});
 
 //Desktop deployment
 var redisIP = "redis://127.0.0.1:6379";
@@ -58,6 +57,8 @@ var bar = new progressBar('[:bar] [:percent]', { width: 80, total: 100 });
 var cvgStream = null;
 var pathStream = null;
 var LinkAttributes = new hashMap(); 
+var NodeNewtoOld = new hashMap();
+var NodeOldtoNew = new hashMap();
 
 //set global iter
 redisClient.select(9);
@@ -133,10 +134,19 @@ async.series([
     //read node file
     function (callback) {
         var stream = fs.createReadStream(appFolder + "/" + par.nodefilename);
+        var sId = par.zonenum + 1;
         var csvStream = csv({ headers: true })
             .on("data", function (data) {
                 var id = data['N'];
-                id = id.trim();
+                id = parseInt(id.trim());
+                if (id <= par.zonenum) {
+                    NodeNewtoOld.set(id, id);
+                    NodeOldtoNew.set(id, id);
+                } else {
+                    NodeNewtoOld.set(sId, id);
+                    NodeOldtoNew.set(id, sId);
+                    sId = sId + 1;
+                }  
             })
             .on("end", function (result) {
                 logger.info("read nodes total of " + par.zonenum + " zones");
@@ -152,9 +162,9 @@ async.series([
             .on("data", function (data) {
                 var anode = data['A'];
                 var bnode = data['B'];
-                anode = anode.trim();
-                bnode = bnode.trim();
-                var data_id = anode + '-' + bnode;
+                anode = parseInt(anode.trim());
+                bnode = parseInt(bnode.trim());
+                var data_id = NodeOldtoNew.get(anode) + '-' + NodeOldtoNew.get(bnode);
                 arrLink.push(data_id);    //anode-bnode
                 LinkAttributes.set(data_id, {
                     dist: parseFloat(data['Dist']), cap: parseFloat(data['Cap'])
@@ -184,7 +194,7 @@ async.series([
         var keyPre = '';
         var v = '';
         var cnt = 0;
-        var tot = math.pow(par.zonenum, 2) * 96 * par.modes.length;
+        var tot = Math.pow(par.zonenum, 2) * 96 * par.modes.length;
         bar.update(0);
         redisClient.select(5);
         myInterface.on("line", function (line) {           
@@ -267,12 +277,20 @@ var model_Loop = function () {
             var cnt = 0;
             arrLink.forEach(function (link) {       //anode-bnode
                 multi.rpush('task', link);
+                //logger.info('iter' + iter + ' set redis 8 ' + link);
                 cnt = cnt + 1;
             });
             multi.exec(function (err, result) {
                 logger.info('iter' + iter + ' set ' + linkupdateNum + ' link tasks in redis');
                 callback();
             });
+        },
+        function (callback) {
+            var logChoiceFile = './output' + '/' + par.log.dpnodefilename;
+            fs.truncate(logChoiceFile, 0);  //log only last iteration
+            choiceStream = fs.createWriteStream(logChoiceFile, { 'flags': 'a' });
+            choiceStream.write("iter, orgID, destID, startTS, tStep, dpID, cmnNd, distTl, distTf, timeTl, timeTf, timeFFTl, timeFFTf, TollEL, TollGP, utility, TlShare" + os.EOL);
+            callback();
         }],
         function (err, results) {
             redisClient.publish('job', 'sp_mv', function (err, result) {
@@ -359,7 +377,7 @@ redisJob.on("message", function (channel, message) {
                                 arrvht.forEach(function (vht) {
                                     var v = vht.split(',');
                                     vht_tot = vht_tot + parseFloat(v[0]);
-                                    vht_square = vht_square + math.pow(parseFloat(v[1]), 2);
+                                    vht_square = vht_square + Math.pow(parseFloat(v[1]), 2);
                                     vol_tot = vol_tot + parseFloat(v[2]);
                                     vol_totdiff = vol_totdiff + parseFloat(v[3]);
                                     //if (ts == 0) {
@@ -372,13 +390,13 @@ redisJob.on("message", function (channel, message) {
                                         var rmse = 0;
                                     } else {
                                         var gp = vol_totdiff / vol_tot;
-                                        var rmse = math.pow((vht_square / arrvht.length), 0.5) / (vht_tot / arrvht.length);
+                                        var rmse = Math.pow((vht_square / arrvht.length), 0.5) / (vht_tot / arrvht.length);
                                     }
-                                    arrCvgLog.push([iter, ts, math.round(gp, 4), math.round(rmse, 4)]);
+                                    arrCvgLog.push([iter, ts, Math.round(gp * 10000) / 10000, Math.round(rmse * 10000) / 10000]);
                                     //logger.debug('iter' + iter + ' vol diff=' + vol_totdiff + ' vol tot=' + vol_tot);
                                     //gap.push(rmse);
-                                    maxGap = math.max(gp, maxGap);
-                                    maxRMSE = math.max(rmse, maxRMSE);
+                                    maxGap = Math.max(gp, maxGap);
+                                    maxRMSE = Math.max(rmse, maxRMSE);
                                 } else {
                                     arrCvgLog.push([iter, ts, 0, 0]);
                                     //gap.push(0);
@@ -412,7 +430,7 @@ redisJob.on("message", function (channel, message) {
                             for (var i = 0; i < arrCvgLog.length; i++) {
                                 cvgStream.write(arrCvgLog[i][0] + ',' + (arrCvgLog[i][1] + 1) + ',' + arrCvgLog[i][2] + ',' + arrCvgLog[i][3] + os.EOL);
                             }                                                     
-                            logger.info('iter' + iter + ' RGAP=' + math.round(maxGap, 4) + ' VHT_RMSE=' + math.round(maxRMSE, 4));
+                            logger.info('iter' + iter + ' RGAP=' + Math.round(maxGap*10000)/10000 + ' VHT_RMSE=' + Math.round(maxRMSE*10000)/10000);
                          }
                     );                    
                 } 
@@ -432,7 +450,8 @@ redisJob.on("message", function (channel, message) {
                     });
                     callback();
                 } else {
-                    //write csv file                    
+                    //write csv file 
+                    //logger.info('iter' + iter + ' start write csv');
                     async.series([
                         function (callback) {
                             redisClient.select(2);
@@ -494,7 +513,7 @@ redisJob.on("message", function (channel, message) {
                                                         s = s + ',' + v[i * par.timesteps + j - 1];
                                                     }
                                                 }
-                                                volStream.write(nd[0] + ',' + nd[1] + ',' + j + ',' + s + ',' + speed[j] + ',' + toll[j] + ',' +vc[j] + os.EOL);
+                                                volStream.write(NodeNewtoOld.get(parseInt(nd[0])) + ',' + NodeNewtoOld.get(parseInt(nd[1])) + ',' + j + ',' + s + ',' + speed[j] + ',' + toll[j] + ',' +vc[j] + os.EOL);
                                             }
                                             callback();
                                         });
