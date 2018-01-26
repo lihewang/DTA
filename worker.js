@@ -174,7 +174,7 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, zj, totT
         nodeList.push(currNode);
         var cnt = 0;    //count visited zones
         var vot = par.choicemodel.timecoeff / par.choicemodel.tollcoeff;
-        
+        mgNodes.pop();
         //visit nodes   
         var loopcnt = 0;
         do {          
@@ -184,14 +184,14 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, zj, totT
             currNode.stled = 1; 
             path[currNode.id] = currNode.upNd;            
             //--- tltf path ---
-            if (currNode.id != zone.id) { 
+            //if (currNode.id != zone.id) { 
                 for (var j = mgNodes.length - 1; j >= 0; j--) {                    
                     if (mgNodes[j].id == currNode.id) {  
                         //logger.debug(`[${process.pid}]` + ' iter' + iter + ' --- end SP nanosec=' + process.hrtime(tm1)[1] / 1000000 + ' sp mgNode=' + NodeNewtoOld.get(mgNodes[j].id) + ' loopcnt=' + loopcnt);
                         return callback(null, currNode); 
                     }
                 }                               
-            }
+            //}
             
             if (currNode.id <= zonenum) { //track centriod nodes                    
                 cnt = cnt + 1;
@@ -306,7 +306,7 @@ var sp = function ShortestPath(zone, zonenum, tp, mode, pathType, iter, zj, totT
 //********move vehicle********
 var mv = function MoveVehicle(pkt, callback) {
     //if (pkt.zint == 192) {
-        //logger.debug(`[${process.pid}]` + ' iter' + iter + ' ***mv ' + pkt.ts + ':' + NodeNewtoOld.get(pkt.zi) + '-' + pkt.zj + ':' + pkt.pathType + ' vol=' + pkt.vol);
+    //    logger.debug(`[${process.pid}]` + ' iter' + iter + ' ***mv ' + pkt.ts + ':' + NodeNewtoOld.get(pkt.zi) + '-' + pkt.zj + ':' + pkt.pathType + ' vol=' + pkt.vol);
     //}
     if (pkt.pathType == 'ct') {
         stats.zonepacket = stats.zonepacket + 1;
@@ -693,7 +693,7 @@ if (cluster.isMaster) {
                                 //logger.debug(`[${process.pid}]` + ' ***iter' + iter + ' get sp zone task ' + result);
                                 if (result == null) {
                                     redisClient.incr('cnt', function (err, result) {
-                                        logger.info(`[${process.pid}]` + ' iter' + iter + ' processor ' + result + ' znpath=' + stats.zonepath + ' zonepkt=' + stats.zonepacket + 
+                                        logger.info(`[${process.pid}]` + ' iter' + iter + ' thread ' + result + ' znpath=' + stats.zonepath + ' zonepkt=' + stats.zonepacket + 
                                             ' dppath=' + stats.dppath  + ' dppkt=' + stats.dppacket);
                                         if (result == par.numprocesses) {
                                             logger.info(`[${process.pid}]` + ' iter' + iter + ' --- sp and mv done ---');
@@ -794,9 +794,9 @@ if (cluster.isMaster) {
                                             }
                                         } else {
                                             if (strVol == '') {
-                                                strVol = '0';
+                                                strVol = '-1';
                                             } else {
-                                                strVol = strVol + ',0';
+                                                strVol = strVol + ',-1';
                                             }
                                         }
                                     }
@@ -919,7 +919,11 @@ if (cluster.isMaster) {
                                         var arrV_pre = result.split(',');
                                         var strVol = '';
                                         for (var i = 0; i <= par.timesteps * par.modes.length - 1; i++) {
-                                            var msaVol = parseFloat(arrV_pre[i]) * (1 - stepSize) + parseFloat(arrV_cur[i]) * stepSize;
+                                            if (arrV_cur[i] == '-1') {
+                                                var msaVol = parseFloat(arrV_pre[i]);
+                                            } else {
+                                                var msaVol = parseFloat(arrV_pre[i]) * (1 - stepSize) + parseFloat(arrV_cur[i]) * stepSize;
+                                            }
                                             if (strVol == '') {
                                                 strVol = msaVol.toString();
                                             } else {
@@ -967,7 +971,7 @@ if (cluster.isMaster) {
                                     var strTemp = '';
                                     for (var i = 0; i <= par.timesteps - 1; i++) {
                                         if (vol[i] != 0) {   
-                                            var cgTime = lnk.fftime[i + 1] * (1 + lnk.alpha * Math.pow(vol[i] * 4 / lnk.cap, lnk.beta));
+                                            var cgTime = lnk.fftime[i + 1] * (1 + lnk.alpha * Math.pow(Math.min(vol[i] * 4 / lnk.cap, par.maxvc), lnk.beta));
                                             vht.push(vol[i] * cgTime / 60);
                                         } else {    //no traffic
                                             var cgTime = lnk.time[i];

@@ -410,37 +410,36 @@ redisJob.on("message", function (channel, message) {
                         },
                         function (err) {
                             //start from timestep 1, find the boudary of time steps that meet the threshold
-                            //logger.info('iter' + iter + ' this iter startTimeStep=' + startTimeStep + ' endTimeStep=' + endTimeStep + ' arrCvgLog length=' + arrCvgLog.length);
-                            //for (var i = 0; i < arrCvgLog.length; i++) {
-                            //    //logger.info('iter' + iter + ' ts=' + arrCvgLog[i][1]);
-                            //    if (arrCvgLog[i][2] >= par.timestepgap) {
-                            //        startTimeStep = arrCvgLog[i][1] + 1;
-                            //        break;
-                            //    }                                
-                            //}
-                            //for (var i = arrCvgLog.length - 1; i >= 0; i--) {
-                            //    var ts = arrCvgLog[i][1] + 1;
-                            //    if (arrCvgLog[i][2] >= par.timestepgap) {
-                            //        endTimeStep = ts
-                            //        break;
-                            //    }
-                            //}
-                            startTimeStep = 1;
-                            endTimeStep = par.timesteps
+                            for (var i = startTimeStep; i <= endTimeStep; i++) {
+                                if (arrCvgLog[i - 1][2] >= par.timestepgap) {
+                                    startTimeStep = i;
+                                    break;
+                                }                                
+                            }
+                            for (var i = endTimeStep; i >= startTimeStep; i--) {                               
+                                if (arrCvgLog[i - 1][2] >= par.timestepgap) {
+                                    endTimeStep = i;
+                                    break;
+                                }
+                            }
+                            //startTimeStep = 1;
+                            //endTimeStep = par.timesteps
                             for (var i = 0; i < arrCvgLog.length; i++) {
                                 cvgStream.write(arrCvgLog[i][0] + ',' + (arrCvgLog[i][1] + 1) + ',' + arrCvgLog[i][2] + ',' + arrCvgLog[i][3] + os.EOL);
-                            }                                                     
-                            logger.info('iter' + iter + ' RGAP=' + Math.round(maxGap*10000)/10000 + ' VHT_RMSE=' + Math.round(maxRMSE*10000)/10000);
+                            } 
+                            logger.info('iter' + iter + ' next iter startTimeStep=' + startTimeStep + ' endTimeStep=' + endTimeStep)
+                            logger.info('iter' + iter + ' RGAP=' + Math.round(maxGap * 10000) / 10000 + ' VHT_RMSE=' + Math.round(maxRMSE * 10000) / 10000);
+                            callback();
                          }
                     );                    
-                } 
+                } else {
+                    callback();
+                }                 
+            },
+            function (callback) { 
                 redisClient.select(9);
                 redisClient.set('startTimeStep', startTimeStep);
-                redisClient.set('endTimeStep', endTimeStep, function (err, result) {
-                    callback();
-                });
-            },
-            function (callback) {           
+                redisClient.set('endTimeStep', endTimeStep);
                 //check convergence
                 if (iter < par.maxiter && maxGap > par.gap) { //continue
                     iter = iter + 1;
