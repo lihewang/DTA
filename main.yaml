@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
       - name: main
-        image: gcr.io/bright-primacy-140715/main:1.0
+        image: gcr.io/dta-01/main:latest
         resources:
           requests:
             cpu: 100m

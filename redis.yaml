@@ -10,13 +10,12 @@ spec:
   - port: 6379
     name: redis
     targetPort: 6379
-    nodePort: 32756
   selector:
     app: redis
 apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
-  name: redis-master
+  name: redis
 spec:
   replicas: 1
   template:
@@ -27,8 +26,8 @@ spec:
         tier: backend
     spec:
       containers:
-      - name: master
-        image: gcr.io/bright-primacy-140715/redis:redis-alpine
+      - name: redis
+        image: redis
         resources:
           requests:
             cpu: 100m

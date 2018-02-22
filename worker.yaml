@@ -27,7 +27,7 @@ spec:
     spec:
       containers:
       - name: worker
-        image: gcr.io/bright-primacy-140715/worker:1.0
+        image: gcr.io/dta-01/worker:latest
         resources:
           requests:
             cpu: 100m

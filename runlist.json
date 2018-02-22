@@ -1,9 +1,10 @@
 {
-  "runs": ["base", "scen"],
+  "runs": ["base"],
   "base": {
     "parameterfile": "input/parameters.json",
     "overwrite": {
-      "maxiter": 21,
+      "maxiter": 50,
+      "numprocesses": 2,
       "linkfilename": "input/links.csv",
       "nodefilename": "input/nodes.csv",
       "triptablefilename": "input/triptable.csv"
@@ -12,7 +13,8 @@
   "scen": {
     "parameterfile": "input/parameters.json",
     "overwrite": {
-      "maxiter": 5,
+      "maxiter": 1,
+      "numprocesses": 1,
       "linkfilename": "input/links.csv",
       "nodefilename": "input/nodes.csv",
       "triptablefilename": "input/triptable.csv"
