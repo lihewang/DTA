@@ -1,0 +1,51 @@
+//Container builder
+gcloud container builds submit --config cloudbuild.yaml .
+
+//Create GC cluster*
+gcloud container clusters create eltod --zone=us-central1-a --num-nodes=3 --machine-type=f1-micro --scopes=storage-rw
+
+//Delete cluster
+gcloud container clusters delete eltod --zone=us-central1-a
+//Get auth
+sudo gcloud auth application-default login
+
+//init gcloud
+sudo gcloud init
+
+//Get root access
+sudo -i
+
+//Get kube-dns
+sudo kubectl get svc kube-dns --namespace=kube-system
+
+//Deploy kubernetes dashboard 
+kubectl proxy
+http://localhost:8001/ui
+
+//Deploy container to cluster
+kubectl run redis-server5 --image=gcr.io/bright-primacy-140715/redis:redis-alpine --port=6379
+
+//Create deployment
+kubectl create -f ..\..\redis.yaml
+kubectl expose deployment worker --type=LoadBalancer --port 8080
+
+kubectl create -f ..\..\worker.yaml
+kubectl create -f ..\..\main.yaml
+
+//Delete deployment
+kubectl delete -f ..\..\redis.yaml
+kubectl delete -f ..\..\worker.yaml
+kubectl delete -f ..\..\main.yaml
+
+//Create service
+kubectl expose deployment/worker
+
+//ssh to the pod
+kubectl exec -it worker-370362994-bvq93 -- sh
+
+//image location
+gcr.io/bright-primacy-140715/worker:1.0
+
+//minikube commands
+//start minikube
+minikube start
