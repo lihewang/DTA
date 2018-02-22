@@ -13,15 +13,15 @@ var storage = require('@google-cloud/storage');
 var cloud_prjID = 'dta-01';
 var cloud_bucketName = 'eltod';
 var runlistfilename = 'runlist.json';
-var redisIP = "redis://127.0.0.1:6379";
+//var redisIP = "redis://127.0.0.1:6379";
+var redisIP = "redis.default.svc.cluster.local:6379";
 
 var gcs = storage({
     projectId: cloud_prjID,
-    keyFilename: 'dta-01-1e8b82b8f33c.json'   //needed to run locally
+    //keyFilename: 'dta-01-1e8b82b8f33c.json'   //needed to run locally; not needed for Google Cloud
 });
 var bucket = gcs.bucket(cloud_bucketName);
 
-var outsetFile = "./output/vol.csv"
 var arrLink = [];
 var zoneNodes = [];
 var iter = 1;
@@ -29,8 +29,8 @@ var gap = 1;
 var spmvNum = 0;
 var linkupdateNum = 0;
 var workercnt = 0;
-var startTimeStep = 0;
-var endTimeStep = 0;
+var startTimeStep = 1;
+var endTimeStep = 96;
 var cvgStream = null;
 var pathStream = null;
 var LinkAttributes = new Map(); 
@@ -40,7 +40,8 @@ var scenRuns = [];
 var scenIndex = 0;
 var runListPar = '';
 var par = null;
-
+var volStream = null;
+var loadedLinkFile = '';
 var redisClient = new redis(redisIP);
 var redisJob = new redis(redisIP);
 redisJob.subscribe("job_status");
@@ -48,7 +49,7 @@ redisJob.subscribe("job_status");
 //read run list file
 async.series([
     function (callback) {
-        console.log('read run list file...');
+        console.log('read run list file');
         var runlistFile = bucket.file(runlistfilename);
         runlistFile.download(function (err, result) {
             runListPar = JSON.parse(result);         
@@ -61,7 +62,7 @@ async.series([
 
 var scen_Loop = function () {
     //read in files
-    console.log('read input files...');
+    console.log('--- Start Scenario ' + runListPar.runs[scenIndex] + ' ---');
     async.series([
         function (callback) {
             //read parameters for the scenario
@@ -72,10 +73,10 @@ var scen_Loop = function () {
                 if (err) {
                     console.log('parameter file not found ' + parFile);
                 }
-                par = JSON.parse(result); 
+                par = JSON.parse(result);
                 Object.keys(overwrite).forEach(function (k) {
                     par[k] = overwrite[k];
-                });                
+                });
                 callback();
             });
         },
@@ -114,20 +115,20 @@ var scen_Loop = function () {
         //        callback();
         //    });
         //},
-        //function (callback) {
-        //    //create link output file
-        //    var logvolFile = './output' + '/' + 'vol.csv';
-        //    fs.unlink(logvolFile, function (err, result) {
-        //        volStream = fs.createWriteStream(logvolFile, { 'flags': 'a' });
-        //        var s = 'A,B,TIMESTEP';
-        //        for (var j = 0; j < par.modes.length; j++) {
-        //            s = s + ',' + par.modes[j];
-        //        }
-        //        s = s + ',speed,toll,vc';
-        //        volStream.write(s + os.EOL);
-        //        callback();
-        //    });
-        //},
+        function (callback) {
+            //create link output file
+            console.log('create link output file');
+            //loadedLinkFile = '/output/' + runListPar.runs[scenIndex] + '/vol.csv
+            loadedLinkFile = '/output/vol.csv';
+            volStream = fs.createWriteStream(loadedLinkFile);        
+            var s = 'A, B, TIMESTEP';
+            for (var j = 0; j < par.modes.length; j++) {
+                s = s + ',' + par.modes[j];
+            }
+            s = s + ',speed,toll,vc' + os.EOL;
+            volStream.write(s);
+            callback();                                  
+        },
         //read node file
         function (callback) {
             //console.log('read node file ' + par.nodefilename);
@@ -295,16 +296,15 @@ var model_Loop = function () {
             });
         },
         function (callback) {
-            var logChoiceFile = './output' + '/' + par.log.dpnodefilename;
-            fs.truncate(logChoiceFile, 0);  //log only last iteration
-            choiceStream = fs.createWriteStream(logChoiceFile, { 'flags': 'a' });
-            choiceStream.write("iter, orgID, destID, startTS, tStep, dpID, cmnNd, distTl, distTf, timeTl, timeTf, timeFFTl, timeFFTf, TollEL, TollGP, utility, TlShare" + os.EOL);
+            //var logChoiceFile = './output' + '/' + par.log.dpnodefilename;
+            //fs.truncate(logChoiceFile, 0);  //log only last iteration
+            //choiceStream = fs.createWriteStream(logChoiceFile, { 'flags': 'a' });
+            //choiceStream.write("iter, orgID, destID, startTS, tStep, dpID, cmnNd, distTl, distTf, timeTl, timeTf, timeFFTl, timeFFTf, TollEL, TollGP, utility, TlShare" + os.EOL);
             callback();
         }],
         function (err, results) {
             redisClient.publish('job', 'sp_mv', function (err, result) {
                 console.log('iter' + iter + ' running path building and moving vehicles');
-                //bar.update(0);
             });
         });
 }
@@ -382,14 +382,15 @@ redisJob.on("message", function (channel, message) {
                                     //gap.push(0);
                                 }
                                 //if (ts == 71) {
-                                    //console.log('iter' + iter + ' timestep=' + ts + ' gap=' + gp + ' vht_square=' + math.round(vht_square, 0)
-                                    //    + ' vht_tot=' + math.round(vht_tot, 0) + ' arrvht length=' + arrvht.length);
+                                    //console.log('iter' + iter + ' timestep=' + ts + ' gap=' + gp + ' vht_square=' + Math.round(vht_square, 0)
+                                    //    + ' vht_tot=' + Math.round(vht_tot, 0) + ' arrvht length=' + arrvht.length);
                                 //}
                                 callback();                                  
                             });                           
                         },
                         function (err) {
                             //start from timestep 1, find the boudary of time steps that meet the threshold
+                            console.log('iter' + iter + ' startTimeStep=' + startTimeStep + ' endTimeStep=' + endTimeStep);
                             for (var i = startTimeStep; i <= endTimeStep; i++) {
                                 if (arrCvgLog[i - 1][2] >= par.timestepgap) {
                                     startTimeStep = i;
@@ -404,9 +405,9 @@ redisJob.on("message", function (channel, message) {
                             }
                             //startTimeStep = 1;
                             //endTimeStep = par.timesteps
-                            for (var i = 0; i < arrCvgLog.length; i++) {
-                                cvgStream.write(arrCvgLog[i][0] + ',' + (arrCvgLog[i][1] + 1) + ',' + arrCvgLog[i][2] + ',' + arrCvgLog[i][3] + os.EOL);
-                            } 
+                            //for (var i = 0; i < arrCvgLog.length; i++) {
+                            //    cvgStream.write(arrCvgLog[i][0] + ',' + (arrCvgLog[i][1] + 1) + ',' + arrCvgLog[i][2] + ',' + arrCvgLog[i][3] + os.EOL);
+                            //} 
                             console.log('iter' + iter + ' next iter startTimeStep=' + startTimeStep + ' endTimeStep=' + endTimeStep)
                             console.log('iter' + iter + ' RGAP=' + Math.round(maxGap * 10000) / 10000 + ' VHT_RMSE=' + Math.round(maxRMSE * 10000) / 10000);
                             callback();
@@ -467,7 +468,7 @@ redisJob.on("message", function (channel, message) {
                                         redisClient.select(7);
                                         redisClient.get(arrKey[0], function (err, result) {
                                             toll.push(0);
-                                            if (result == null) {                                                
+                                            if (result == null) {
                                                 for (var j = 0; j < par.timesteps; j++) {
                                                     toll.push(0);
                                                 }
@@ -492,7 +493,7 @@ redisJob.on("message", function (channel, message) {
                                                         s = s + ',' + v[i * par.timesteps + j - 1];
                                                     }
                                                 }
-                                                volStream.write(NodeNewtoOld.get(parseInt(nd[0])) + ',' + NodeNewtoOld.get(parseInt(nd[1])) + ',' + j + ',' + s + ',' + speed[j] + ',' + toll[j] + ',' +vc[j] + os.EOL);
+                                                volStream.write(NodeNewtoOld.get(parseInt(nd[0])) + ',' + NodeNewtoOld.get(parseInt(nd[1])) + ',' + j + ',' + s + ',' + speed[j] + ',' + toll[j] + ',' + vc[j] + os.EOL);
                                             }
                                             callback();
                                         });
@@ -504,18 +505,31 @@ redisJob.on("message", function (channel, message) {
                                     callback();
                                 });
                             });
+                        },
+                        function (callback) {
+                            //upload to bucket
+                            bucket.upload(loadedLinkFile, { destination: '/result/' + runListPar.runs[scenIndex] + '/vol.csv' }, function (err, result) {
+                                if (err) {
+                                    console.log('iter' + iter + ' upload to bucket err '+ err);
+                                } else {
+                                    console.log('iter' + iter + ' upload to bucket success ' + result);
+                                }
+                                callback();
+                            });                                                                             
                         }],
                         function (err, results) {
                             volStream.end();
-                            cvgStream.end();
-                            pathStream.end();
-                            scenIndex = scenIndex + 1;
-                            scen_Loop();
-                            //redisClient.publish('job', 'end', function (err, result) {
-                            //    console.log('iter' + iter + ' end of program');
-                            //    process.exit(0); //End server
-                            //    callback(null, "End of program");
-                            //});
+                            //cvgStream.end();
+                            //pathStream.end();
+                            if (scenIndex == runListPar.runs.length - 1) {
+                                console.log('iter' + iter + ' end of program');
+                                //process.exit(0); //End server
+                                callback(null, "End of program");
+                            } else {
+                                iter = 1;
+                                scenIndex = scenIndex + 1;
+                                scen_Loop();
+                            }                            
                         });
                 }
                 
