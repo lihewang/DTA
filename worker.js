@@ -9,11 +9,12 @@ var storage = require('@google-cloud/storage');
 var cloud_prjID = 'dta-01';
 var cloud_bucketName = 'eltod';
 var runlistfilename = 'runlist.json';
-var redisIP = "redis://127.0.0.1:6379";
+//var redisIP = "redis://127.0.0.1:6379";
+var redisIP = "redis.default.svc.cluster.local:6379";
 
 var gcs = storage({
     projectId: cloud_prjID,
-    keyFilename: 'dta-01-1e8b82b8f33c.json'   //needed to run locally
+    //keyFilename: 'dta-01-1e8b82b8f33c.json'   //needed to run locally
 });
 var bucket = gcs.bucket(cloud_bucketName);
 
@@ -29,7 +30,7 @@ var iter = 0;
 var pathStream = null;
 var choiceStream = null;
 var stats = {zonepath:0, dppath:0, zonepacket: 0, dppacket: 0};
-var redisIP = "redis://127.0.0.1:6379";
+var logStream = fs.createWriteStream('/output/log.txt');  
 var redisClient = new redis(redisIP); 
 var redisJob = new redis(redisIP);
 var startTimeStep = 1;
@@ -480,18 +481,18 @@ var mv = function MoveVehicle(pkt, callback) {
                         + par.choicemodel.tollcoeff * (toll[0] - toll[1]) + relia);
                     probability = 1 / (1 + Math.exp(utility));
                     //log file                    
-                    if (par.log.dpnode.indexOf(NodeNewtoOld.get(bNode.id)) != -1) {                             //hasn't been checked in this iteration  
-                        choiceStream.write(iter + ',' + NodeNewtoOld.get(pkt.zint) + ',' + pkt.zj + ',' + pkt.tsint + ',' + currTp + ',' + NodeNewtoOld.get(bNode.id)
-                            + ',' + NodeNewtoOld.get(mgNode.id) + ',' + Math.round(dist[0] * 100) / 100 + ',' + Math.round(dist[1] * 100) / 100 + ',' + Math.round(timeskim[0] * 100) / 100
-                            + ',' + Math.round(timeskim[1] * 100) / 100 + ',' + timeFF[0] + ',' + timeFF[1] + ',' + toll[0] + ',' + toll[1] + ',' + Math.round(utility*100)/100
-                            + ',' + Math.round(probability * 10000) / 10000 + os.EOL);
-                    }
+                    //if (par.log.dpnode.indexOf(NodeNewtoOld.get(bNode.id)) != -1) {                             //hasn't been checked in this iteration  
+                    //    choiceStream.write(iter + ',' + NodeNewtoOld.get(pkt.zint) + ',' + pkt.zj + ',' + pkt.tsint + ',' + currTp + ',' + NodeNewtoOld.get(bNode.id)
+                    //        + ',' + NodeNewtoOld.get(mgNode.id) + ',' + Math.round(dist[0] * 100) / 100 + ',' + Math.round(dist[1] * 100) / 100 + ',' + Math.round(timeskim[0] * 100) / 100
+                    //        + ',' + Math.round(timeskim[1] * 100) / 100 + ',' + timeFF[0] + ',' + timeFF[1] + ',' + toll[0] + ',' + toll[1] + ',' + Math.round(utility*100)/100
+                    //        + ',' + Math.round(probability * 10000) / 10000 + os.EOL);
+                    //}
                     //logger.debug('probability calculation: tollconst=' + par.choicemodel.tollconst[tp - 1] + ',scalesdlen=' + par.choicemodel.scalestdlen
                     //    + ',scalealpha=' + par.choicemodel.scalealpha + ',timecoeff=' + par.choicemodel.timecoeff
                     //    + ',tollcoeff=' + par.choicemodel.tollcoeff + ',reliacoeffratio=' + par.choicemodel.reliacoeffratio
                     //    + ',reliacoefftime=' + par.choicemodel.reliacoefftime + ',reliacoeffdist=' + par.choicemodel.reliacoeffdist);
 
-                    //logger.debug(`[${process.pid}]` + ' iter ' + iter + ' ' + currTp + ':' + NodeNewtoOld.get(pkt.zi) + '-' + pkt.zj + ':' + pkt.mode + ':' + pkt.pathType
+                    //console.log('iter ' + iter + ' ' + currTp + ':' + NodeNewtoOld.get(pkt.zi) + '-' + pkt.zj + ':' + pkt.mode + ':' + pkt.pathType
                     //    + ' dp id=' + NodeNewtoOld.get(bNode.id) + ' distTl=' + Math.round(dist[0] * 100) / 100 + ',distTf=' + Math.round(dist[1] * 100) / 100 + ',timeTl=' + Math.round(timeskim[0] * 100) / 100
                     //    + ',timeTf=' + Math.round(timeskim[1] * 100) / 100 + ',timeFFTl=' + Math.round(timeFF[0]*100)/100 + ',timeFFTf=' + timeFF[1] + ',Toll=' + Math.round(toll[0] * 100) / 100
                     //    + ',utility=' + Math.round(utility * 100) / 100 + ',probability=' + Math.round(probability * 10000) / 10000);
@@ -554,7 +555,7 @@ redisClient.on("error", function (err) {
 //********START******** 
 async.series([
     function (callback) {
-        console.log('read run list file...');
+        logStream.write('read run list file...');
         var runlistFile = bucket.file(runlistfilename);
         runlistFile.download(function (err, result) {
             runListPar = JSON.parse(result);
@@ -587,18 +588,22 @@ var scen_Loop = function () {
             startTimeStep = par.starttimestep;
             endTimeStep = par.timesteps;
             rdnd(function (err, result) {
+                logStream.write(`read node ` + par.zonenum + ' zones');
                 callback();
             });
         },
         function (callback) {
             rdlnk(function (err, result) {
-                console.log(`read link ` + result + ' links');
+                logStream.write(`read link ` + result + ' links');
                 callback();
             });
         }
-    ]);
+    ],
+    function () {
+        logStream.write(`worker node is ready`);
+    });
 }
-console.log(`worker node is ready`);
+
 redisJob.subscribe("job");
 redisClient.publish('job_status', 'worker_ready');
 
@@ -706,10 +711,10 @@ redisJob.on('message', function (channel, message) {
                             //logger.debug(`[${process.pid}]` + ' ***iter' + iter + ' get sp zone task ' + result);
                             if (result == null) {
                                 redisClient.incr('cnt', function (err, result) {
-                                    console.log(`[${process.pid}]` + ' iter' + iter + ' thread ' + result + ' znpath=' + stats.zonepath + ' zonepkt=' + stats.zonepacket + 
+                                    console.log('iter' + iter + ' thread ' + result + ' znpath=' + stats.zonepath + ' zonepkt=' + stats.zonepacket + 
                                         ' dppath=' + stats.dppath  + ' dppkt=' + stats.dppacket);
                                     if (result == par.numprocesses) {
-                                        console.log(`[${process.pid}]` + ' iter' + iter + ' --- sp and mv done ---');
+                                        console.log('iter' + iter + ' --- sp and mv done ---');
                                         redisClient.publish('job', 'linkvolredis');
                                         redisClient.publish('job_status', 'linkvolredis');
                                     }
@@ -864,7 +869,7 @@ redisJob.on('message', function (channel, message) {
             function (err) {
                 redisClient.incr('cntNode', function (err, result) {
                     if (parseInt(result) == par.numprocesses) {                           
-                        console.log(`[${process.pid}]` + ' iter' + iter + ' --- write vol to redis done --- ');
+                        console.log('iter' + iter + ' --- write vol to redis done --- ');
                         redisClient.publish('job_status', 'sp_mv_done');
                     }
                 });
@@ -889,7 +894,7 @@ redisJob.on('message', function (channel, message) {
                     if (result == null) {
                         redisClient.incr('cnt', function (err, result) {
                             if (result == par.numprocesses) {
-                                console.log(`[${process.pid}]` + ' iter' + iter + ' --- linkupdate done ---');
+                                console.log('iter' + iter + ' --- linkupdate done ---');
                                 redisClient.publish('job_status', 'linkupdate_done');
                             }
                         });
