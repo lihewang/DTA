@@ -6,15 +6,15 @@ var async = require('async');
 var os = require('os');
 var storage = require('@google-cloud/storage');
 
-var cloud_prjID = 'dta-01';
-var cloud_bucketName = 'eltod';
+var cloud_prjID = 'dta-beta';
+var cloud_bucketName = 'eltod-beta';
 var runlistfilename = 'runlist.json';
 //var redisIP = "redis://127.0.0.1:6379";
 var redisIP = "redis.default.svc.cluster.local:6379";
 
 var gcs = storage({
     projectId: cloud_prjID,
-    //keyFilename: 'dta-01-1e8b82b8f33c.json'   //needed to run locally
+    //keyFilename: '../../dta-beta-c31385fcfaac.json'   //needed to run locally
 });
 var bucket = gcs.bucket(cloud_bucketName);
 
@@ -549,22 +549,9 @@ var mv = function MoveVehicle(pkt, callback) {
 redisJob.subscribe("job");
 //log redis error
 redisClient.on("error", function (err) {
-    console.log(`[${process.pid}] redis error ` + err);
+    console.log(`redis error ` + err);
 });
 
-//********START******** 
-async.series([
-    function (callback) {
-        logStream.write('read run list file...');
-        var runlistFile = bucket.file(runlistfilename);
-        runlistFile.download(function (err, result) {
-            runListPar = JSON.parse(result);
-            callback();
-        });
-    }],
-    function () {
-        scen_Loop();
-    });
 
 var scen_Loop = function () {
     async.series([
@@ -604,7 +591,27 @@ var scen_Loop = function () {
     });
 }
 
-redisJob.subscribe("job");
+//********START******** 
+async.series([
+    function (callback) {
+        logStream.write('read run list file...');
+        var runlistFile = bucket.file(runlistfilename);
+        runlistFile.download(function (err, result) {
+            if (err) {
+                console.log('read run list file ' + err);
+            } else {
+                runListPar = JSON.parse(result);
+                //runListPar = JSON.parse(fs.readFileSync('../../runlist.json')); //local file
+                //console.log('runlist scen ' + runListPar.base.parameterfile);
+                callback();
+            }
+        });
+    }],
+    function () {
+        //scen_Loop();
+    });
+
+//redisJob.subscribe("job");
 redisClient.publish('job_status', 'worker_ready');
 
 //process jobs
