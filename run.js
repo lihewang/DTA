@@ -119,12 +119,22 @@ var delCluster = function () {
             console.log('copy output ' + err);
         } else {
             if (deleteCluster) {
-                console.log('deleting cluster ...');
+                var symbols = ['-', '\\', '|', '/'];
+                var ticks = 0;
+                objI = setInterval(function () {
+                    ticks = ticks + 1;
+                    process.stdout.clearLine();
+                    process.stdout.cursorTo(0);
+                    process.stdout.write('deleting cluster ... ' + symbols[ticks % 4] + ' (' + Math.round(2 * ticks / 60 * 10) / 10 + ' min)');
+                }, 2000);
+
                 exec('gcloud container clusters delete ' + clusterName + ' --zone=' + zone + ' --quiet', (err, stdout, stderr) => {
                     if (err) {  
                         console.log('WARNING: cluser clearn up ' + err);
                         console.log('YOU ARE STILL BEING CHARGED FOR BY GOOGLE! GO TO GOOGLE CLOUD CONSOLE TO DELETE THE CLUSTER!');
                     } else {
+                        clearInterval(objI);
+                        console.log(' done');
                         console.log('end of model run ' + stdout);
                     }
                 });
