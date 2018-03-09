@@ -1,0 +1,14 @@
+{
+  "name": "eltod",
+  "version": "1.0.0",
+  "description": "ELTOD3",
+  "main": "main.js",
+  "author": {
+    "name": "lihe.wang"
+  },
+  "dependencies": {
+    "@google-cloud/container": "^0.1.0",
+    "@google-cloud/storage": "^1.5.2",
+    "ioredis": "^3.2.2"
+  }
+}
