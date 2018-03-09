@@ -1,163 +1,137 @@
-var async = require('async');
-var google = require('googleapis');
-var container = google.container('v1');
-var K8s = require('k8s');
+//var google = require('googleapis');
+//var container = google.container('v1');
+//var K8s = require('k8s');
 
 var prjId = "dta-beta";
 var zone = "us-central1-a";
 var clusterName = "eltod";
-var kubectlBin = 'C:\\Users\\lihe.wang\\AppData\\Local\\Google\\Cloud SDK\\google-cloud-sdk\\bin\\kubectl.exe';
-var key = require('./dta-beta-c31385fcfaac.json'); //service account key
-var endPnt = '35.226.114.170';
+var numNodes = 3;
+var machineType = 'n1-standard-1';
+var bucketName = 'eltod-beta'
+var deleteCluster = true;
+
 //clear console
 process.stdout.write('\033c');
+console.log('----------------------------------------------');
+console.log('|    Google Container Engine Control v1.0    |');
+console.log('|    (c)2018                                 |');
+console.log('----------------------------------------------');
 
-var jwtClient = new google.auth.JWT(
-    key.client_email,
-    null,
-    key.private_key,
-    ['https://www.googleapis.com/auth/devstorage.read_write',
-     'https://www.googleapis.com/auth/cloud-platform'], // an array of auth scopes
-    null
-);
-
-jwtClient.authorize(function (err) {
+const { exec } = require('child_process');
+//clean output storage
+exec('gsutil rm -r gs://' + bucketName + '/output', (err, stdout, stderr) => {
     if (err) {
-        console.log('authorize err ' + err);
+        createCluster(); //no output from previous run
     } else {
-        console.log('access to google cloud authorized');
-        //createCluster();
-        //deployRedis();
-        deployWorker();
-    }
+        console.log('clean storage done ' + stdout);
+        createCluster();
+        //copyOutput();
+    }    
 });
 
 var createCluster = function () {
+    var symbols = ['-', '\\', '|', '/'];;
+    var ticks = 0;
+    objInterval = setInterval(function () {
+        ticks = ticks + 1;
+        process.stdout.clearLine();
+        process.stdout.cursorTo(0);
+        process.stdout.write('creating container cluster ... ' + symbols[ticks % 4] + ' (' + Math.round(5 * ticks / 60 * 10) / 10 + ' min)');
+    }, 5000);
+
     //create cluster
-    var request = {
-        projectId: prjId,
-        zone: zone,
-        resource: {
-            cluster: {
-                name: clusterName,
-                initialNodeCount: "3",
-                nodeConfig: {
-                    "machineType": "f1-micro"
-                }
+    exec('gcloud container clusters create ' + clusterName + ' --zone=' + zone + ' --num-nodes=' + numNodes + ' --machine-type=' + machineType + ' --scopes=storage-rw'
+        , (err, stdout, stderr) => {
+            if (err) {
+                console.log('create cluster ' + err);
+                return;
             }
-        },
-        auth: jwtClient
-    };
+            clearInterval(objInterval);
+            console.log(' done');
+            console.log(stdout);
 
-    container.projects.zones.clusters.create(request, function (err, result) {
-        if (err) {
-            console.log('create cluster err ' + err);
-        } else {
-            var request = {
-                projectId: prjId,
-                zone: zone,
-                clusterId: clusterName,
-                auth: jwtClient
-            };
-            var dots = '';
-            //wait until the cluster is running
-            objInterval = setInterval(function () {                
-                container.projects.zones.clusters.get(request, function (err, res) {
-                    if (err) {
-                        console.log('get cluster info err ' + err);
-                    } else {
-                        if (res.data.status == 'RUNNING') {
-                            endPnt = res.data.endpoint;
-                            console.log('');
-                            console.log('cluster is running at ' + endPnt);
-                            clearInterval(objInterval);
-                            deployRedis();
-                        } else {
-                            dots = dots + '.';
-                            process.stdout.clearLine();
-                            process.stdout.cursorTo(0); 
-                            process.stdout.write('creating cluster ' + dots);
-                        }
-                    }
-                });
-            }, 10000);                
-        }
-    });
-}    
+            //get credentials
+            exec('gcloud container clusters get-credentials ' + clusterName + ' --zone ' + zone + ' --project ' + prjId, (err, stdout, stderr) => {
+                if (err) {
+                    console.log('get cluster credentials err ' + err);
+                    return;
+                }
+                console.log('get cluster credentials done' + stdout);
 
-var deployRedis = function () {
-    console.log('deploy redis');
-    var kubectl = K8s.kubectl({
-        endpoint: 'https://' + endPnt,
-        binary: kubectlBin
-    })
-    kubectl.command('create -f redis.yaml', function (err, result) {
+                createPods();
+            });
+        });
+}
+
+var createPods = function () {
+    //create redis
+    exec('kubectl create -f redis.yaml', (err, stdout, stderr) => {
         if (err) {
             console.log('create redis ' + err);
+            return;
         }
-        console.log('create redis ' + result);
-        kubectl.command('expose redis --port 6379', function (err, result) {
+        console.log('create redis done - ' + stdout);
+
+        //create worker
+        exec('kubectl create -f worker.yaml', (err, stdout, stderr) => {
             if (err) {
-                console.log('expose redis ' + err);
+                console.log('create worker ' + err);
+                return;
             }
-            console.log('expose redis - ' + result);
-            deployWorker();
+            console.log('create worker done - ' + stdout);
+
+            //create main and run model           
+            exec('kubectl create -f main.yaml', (err, stdout, stderr) => {
+                if (err) {
+                    console.log('create main ' + err);
+                    return;
+                }
+                console.log('create main done - ' + stdout);
+                copyOutput();
+            });
         });
-    });    
+    });
 }
 
-var deployWorker = function () {
-    console.log('deploy workers');
-    var kubectl = K8s.kubectl({
-        endpoint: 'https://' + endPnt,
-        binary: kubectlBin
-    })
-    //wait until redis is running
-    var dots = '';
-    objInterval2 = setInterval(function () {
-        kubectl.command('get service -o jsonpath="{.items[?(@.metadata.name==\'redis\')].metadata.name}"', function (err, result) {
-            if (err) {
-                console.log('get service ' + err);
-            } else {                
-                if (result == '"redis"') {
-                    clearInterval(objInterval2);
-                    console.log('redis deployed');
-                    kubectl.command('create -f worker.yaml', function (err, result) {
-                        if (err) {
-                            console.log('create workers ' + err);
-                        }
-                        console.log('create workers - ' + result);
-                    });
-                } else {
-                    dots = dots + '.';
-                    process.stdout.clearLine();
-                    process.stdout.cursorTo(0);
-                    process.stdout.write('creating redis ' + dots);
-                }
+var copyOutput = function () {
+    var symbols = ['-', '\\', '|', '/'];
+    var ticks = 0;
+    objItl = setInterval(function () {
+        ticks = ticks + 1;
+        process.stdout.clearLine();
+        process.stdout.cursorTo(0);
+        process.stdout.write('running model ... ' + symbols[ticks % 4] + ' (' + Math.round(10 * ticks / 60 * 10) / 10 + ' min)');
+        exec('gsutil ls gs://' + bucketName + '/output/runfinished', (err, stdout, stderr) => {
+            if (err) {  
+                return;
+            } else {
+                clearInterval(objItl);
+                console.log(' done');
+                delCluster();                
             }
         });
-    }, 5000);                
-    ////workers
-    
+    }, 10000);   
 }
-//var deployWorker = setInterval(function () {
-//    console.log('creating redis ');
-//    //process.exit();
-//}, 1000);
-  /*
-  //delete cluster
-  var request = {
-    projectId: "dta-cloud",
-    zone: 'us-east1-b',
-    clusterID: "model-cluster",
-    auth: authClient
-  };
-  container.projects.zones.clusters.delete(request, function(err, result) {
-    if (err) {
-      console.log(err);
-    } else {
-      console.log(result);
-    }
-  });*/
-//module.exports.auth = auth;
-//module.exports.createCluster = createCluster;
+
+var delCluster = function () {
+    exec('gsutil cp -r gs://' + bucketName + '/output/* ./output/', (err, stdout, stderr) => {
+        if (err) {  
+            console.log('copy output ' + err);
+        } else {
+            if (deleteCluster) {
+                console.log('deleting cluster ...');
+                exec('gcloud container clusters delete ' + clusterName + ' --zone=' + zone + ' --quiet', (err, stdout, stderr) => {
+                    if (err) {  
+                        console.log('WARNING: cluser clearn up ' + err);
+                        console.log('YOU ARE STILL BEING CHARGED FOR BY GOOGLE! GO TO GOOGLE CLOUD CONSOLE TO DELETE THE CLUSTER!');
+                    } else {
+                        console.log('end of model run ' + stdout);
+                    }
+                });
+            } else {                
+                console.log('WARNING: YOU ARE STILL BEING CHARGED FOR BY GOOGLE! GO TO GOOGLE CLOUD CONSOLE TO DELETE THE CLUSTER!');
+                console.log('end of model run');
+            }
+        }
+    });    
+}
