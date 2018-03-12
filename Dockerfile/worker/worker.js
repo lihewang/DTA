@@ -6,12 +6,15 @@ var async = require('async');
 var os = require('os');
 var storage = require('@google-cloud/storage');
 
+var localDebug = false;  //true for local debug
 var cloud_prjID = 'dta-beta';
 var cloud_bucketName = 'eltod-beta';
 var runlistfilename = 'runlist.json';
-//var redisIP = "redis://127.0.0.1:6379";
-var redisIP = "redis.default.svc.cluster.local:6379";
-
+if (localDebug) {
+    var redisIP = "redis://127.0.0.1:6379";
+} else {
+    var redisIP = "redis.default.svc.cluster.local:6379";
+}
 var gcs = storage({
     projectId: cloud_prjID,
     //keyFilename: '../../dta-beta-c31385fcfaac.json'   //needed to run locally
@@ -41,7 +44,11 @@ var par = null;
 
 //********node reader********
 var rdnd = function Readcsv(callback) {
-    var stream = bucket.file(par.nodefilename).createReadStream();
+    if (localDebug) {
+        var stream = fs.createReadStream('../../' + par.nodefilename);
+    } else {
+        var stream = bucket.file(par.nodefilename).createReadStream();
+    }
     var sId = par.zonenum + 1;
     var csvStream = csv({ headers: true })
         .on("data", function (data) {
@@ -560,17 +567,26 @@ var scen_Loop = function () {
             var scenario = runListPar.runs[scenIndex];
             var parFile = runListPar[scenario].parameterfile;
             var overwrite = runListPar[scenario].overwrite
-            console.log('run scenario = ' + scenario + ', parameter file = ' + parFile);
-            bucket.file(parFile).download(function (err, result) {
-                if (err) {
-                    console.log('parameter file not found ' + parFile);
-                }
-                par = JSON.parse(result);
+            console.log('run scenario = ' + scenario);
+            if (localDebug) {
+                par = JSON.parse(fs.readFileSync('../../' + parFile)); //local file
                 Object.keys(overwrite).forEach(function (k) {
                     par[k] = overwrite[k];
                 });
                 callback();
-            });
+            } else {
+                bucket.file(parFile).download(function (err, result) {
+                    if (err) {
+                        console.log('parameter file not found ' + parFile);
+                    }
+                    par = JSON.parse(result);
+                    Object.keys(overwrite).forEach(function (k) {
+                        par[k] = overwrite[k];
+                    });
+                    console.log('read parameter file ' + parFile);
+                    callback();
+                });
+            }
         },
         function (callback) {
             startTimeStep = par.starttimestep;
@@ -597,18 +613,21 @@ async.series([
     function (callback) {
         console.log('start node');
         //logStream.write('read run list file...');
-        
-        bucket.file(runlistfilename)
-        .download(function (err, result) {
-            if (err) {
-                console.log('read run list file ' + err);
-            } else {
-                runListPar = JSON.parse(result);
-                //runListPar = JSON.parse(fs.readFileSync('../../runlist.json')); //local file
-                //console.log('runlist scen ' + runListPar.base.parameterfile);
-                callback();
-            }
-        });     
+        if (localDebug) {
+            runListPar = JSON.parse(fs.readFileSync('../../runlist.json')); //local file
+            callback();
+        } else {
+            bucket.file(runlistfilename)
+                .download(function (err, result) {
+                    if (err) {
+                        console.log('read run list file ' + err);
+                    } else {
+                        runListPar = JSON.parse(result);                        
+                        //console.log('runlist scen ' + runListPar.base.parameterfile);
+                        callback();
+                    }
+                });
+        }
     }],
     function () {
         scen_Loop();
