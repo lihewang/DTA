@@ -1,14 +1,15 @@
-//var google = require('googleapis');
-//var container = google.container('v1');
-//var K8s = require('k8s');
 
-var prjId = "dta-beta";
-var zone = "us-central1-a";
+//---Parameters---
+var prjId = "dta-beta";             //match Google Cloud project ID
+var bucketName = 'eltod-beta'       //match Google Cloud storage bucket name
+
 var clusterName = "eltod";
+var zone = "us-central1-a";
 var numNodes = 3;
+//var machineType = 'g1-small'; 
 var machineType = 'n1-standard-1';
-var bucketName = 'eltod-beta'
-var deleteCluster = true;
+var deleteCluster = false;
+//-----------------
 
 //clear console
 process.stdout.write('\033c');
@@ -36,8 +37,8 @@ var createCluster = function () {
         ticks = ticks + 1;
         process.stdout.clearLine();
         process.stdout.cursorTo(0);
-        process.stdout.write('creating container cluster ... ' + symbols[ticks % 4] + ' (' + Math.round(5 * ticks / 60 * 10) / 10 + ' min)');
-    }, 5000);
+        process.stdout.write('creating container cluster ... ' + symbols[ticks % 4] + ' (' + Math.round(1 * ticks / 60 * 10) / 10 + ' min)');
+    }, 1000);
 
     //create cluster
     exec('gcloud container clusters create ' + clusterName + ' --zone=' + zone + ' --num-nodes=' + numNodes + ' --machine-type=' + machineType + ' --scopes=storage-rw'
@@ -100,17 +101,20 @@ var copyOutput = function () {
         ticks = ticks + 1;
         process.stdout.clearLine();
         process.stdout.cursorTo(0);
-        process.stdout.write('running model ... ' + symbols[ticks % 4] + ' (' + Math.round(10 * ticks / 60 * 10) / 10 + ' min)');
+        process.stdout.write('running model ... ' + symbols[ticks % 4] + ' (' + Math.round(1 * ticks / 60 * 10) / 10 + ' min)');       
+    }, 1000);  
+    objRun = setInterval(function () {
         exec('gsutil ls gs://' + bucketName + '/output/runfinished', (err, stdout, stderr) => {
-            if (err) {  
+            if (err) {
                 return;
             } else {
                 clearInterval(objItl);
+                clearInterval(objRun);
                 console.log(' done');
-                delCluster();                
+                delCluster();
             }
         });
-    }, 10000);   
+    }, 10000);
 }
 
 var delCluster = function () {
@@ -125,8 +129,8 @@ var delCluster = function () {
                     ticks = ticks + 1;
                     process.stdout.clearLine();
                     process.stdout.cursorTo(0);
-                    process.stdout.write('deleting cluster ... ' + symbols[ticks % 4] + ' (' + Math.round(2 * ticks / 60 * 10) / 10 + ' min)');
-                }, 2000);
+                    process.stdout.write('deleting cluster ... ' + symbols[ticks % 4] + ' (' + Math.round(1 * ticks / 60 * 10) / 10 + ' min)');
+                }, 1000);
 
                 exec('gcloud container clusters delete ' + clusterName + ' --zone=' + zone + ' --quiet', (err, stdout, stderr) => {
                     if (err) {  
