@@ -1,24 +1,35 @@
 {
-  "runs": ["base"],
-  "base": {
-    "parameterfile": "input/parameters.json",
-    "overwrite": {
-      "maxiter": 50,
-      "numprocesses": 2,
-      "linkfilename": "input/links.csv",
-      "nodefilename": "input/nodes.csv",
-      "triptablefilename": "input/triptable.csv"
-    }
-  },
-  "scen": {
-    "parameterfile": "input/parameters.json",
-    "overwrite": {
-      "maxiter": 1,
-      "numprocesses": 1,
-      "linkfilename": "input/links.csv",
-      "nodefilename": "input/nodes.csv",
-      "triptablefilename": "input/triptable.csv"
-    }
-  }
-
+	"runs": [
+		"I95"
+	],
+	"base": {
+		"parameterfile": "input/parameters.json",
+		"overwrite": {
+			"maxiter": 50,
+			"numprocesses": 30,
+			"linkfilename": "input/links.csv",
+			"nodefilename": "input/nodes.csv",
+			"triptablefilename": "input/triptable.csv"
+		}
+	},
+	"scen": {
+		"parameterfile": "input/parameters.json",
+		"overwrite": {
+			"maxiter": 1,
+			"numprocesses": 1,
+			"linkfilename": "input/links.csv",
+			"nodefilename": "input/nodes.csv",
+			"triptablefilename": "input/triptable.csv"
+		}
+	},
+	"I95": {
+		"parameterfile": "input/I95/parameters.json",
+		"overwrite": {
+			"maxiter": 2,
+			"numprocesses": 30,
+			"linkfilename": "input/I95/links.csv",
+			"nodefilename": "input/I95/nodes.csv",
+			"triptablefilename": "input/I95/triptable.csv"
+		}
+	}
 }
