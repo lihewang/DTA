@@ -1,14 +1,15 @@
 
 //---Parameters---
-var prjId = "dta-beta";             //match Google Cloud project ID
-var bucketName = 'eltod-beta'       //match Google Cloud storage bucket name
+var prjId = 'dta-beta';              //match Google Cloud project ID
+var bucketName = 'eltod-beta';       //match Google Cloud storage bucket name
 
 var clusterName = "eltod";
 var zone = "us-central1-a";
-var numNodes = 3;
-//var machineType = 'g1-small'; 
-var machineType = 'n1-standard-1';
-var deleteCluster = false;
+var numNodes = 8;
+var numWorkerPods = 30;
+var machineType = 'g1-small'; 
+//var machineType = 'n1-standard-1';
+var deleteCluster = true;              //delete cluster after model run finished
 //-----------------
 
 //clear console
@@ -19,15 +20,35 @@ console.log('|    (c)2018                                 |');
 console.log('----------------------------------------------');
 
 const { exec } = require('child_process');
-//clean output storage
-exec('gsutil rm -r gs://' + bucketName + '/output', (err, stdout, stderr) => {
+
+//set pods number in runlist
+var runlistFile = 'runlist.json';
+var fs = require('fs');
+var par = JSON.parse(fs.readFileSync(runlistFile));
+par.runs.forEach(function (scen) {
+    par[scen].overwrite.numprocesses = numWorkerPods;
+});
+fs.writeFileSync(runlistFile, JSON.stringify(par, null, "\t"));
+console.log('set number of worker pods = ' + numWorkerPods);
+
+//copy runlist file
+process.stdout.write('copy runlist to cloud storage ... ');
+exec('gsutil cp ' + runlistFile + ' gs://' + bucketName + '/', (err, stdout, stderr) => {
     if (err) {
-        createCluster(); //no output from previous run
+        console.log(err);
     } else {
-        console.log('clean storage done ' + stdout);
-        createCluster();
-        //copyOutput();
-    }    
+        console.log(stdout);
+        //clean storage
+        exec('gsutil rm gs://' + bucketName + '/output/runfinished', (err, stdout, stderr) => {
+            if (err) {
+                createCluster(); //no output from previous run
+            } else {
+                console.log('clean storage done' + stdout);
+                createCluster();
+                //copyOutput();
+            }
+        });
+    }
 });
 
 var createCluster = function () {
@@ -35,7 +56,7 @@ var createCluster = function () {
     var ticks = 0;
     objInterval = setInterval(function () {
         ticks = ticks + 1;
-        process.stdout.clearLine();
+        process.stdout.clearLine();        
         process.stdout.cursorTo(0);
         process.stdout.write('creating container cluster ... ' + symbols[ticks % 4] + ' (' + Math.round(1 * ticks / 60 * 10) / 10 + ' min)');
     }, 1000);
@@ -80,15 +101,23 @@ var createPods = function () {
                 return;
             }
             console.log('create worker done - ' + stdout);
-
-            //create main and run model           
-            exec('kubectl create -f main.yaml', (err, stdout, stderr) => {
+            //set worker replicas
+            exec('kubectl scale --replicas=' + numWorkerPods + ' -f worker.yaml', (err, stdout, stderr) => {
                 if (err) {
-                    console.log('create main ' + err);
+                    console.log('set worker replicas ' + err);
                     return;
                 }
-                console.log('create main done - ' + stdout);
-                copyOutput();
+                console.log('set worker replicas done - ' + stdout);
+
+                //create main and run model           
+                exec('kubectl create -f main.yaml', (err, stdout, stderr) => {
+                    if (err) {
+                        console.log('create main ' + err);
+                        return;
+                    }
+                    console.log('create main done - ' + stdout);
+                    copyOutput();
+                });
             });
         });
     });
