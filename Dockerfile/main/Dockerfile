@@ -6,7 +6,6 @@ RUN npm install ioredis
 RUN npm install --save @google-cloud/storage
 RUN mkdir -p /app
 COPY main.js /app/
-COPY package.json /app/
 RUN mkdir /output
 VOLUME /output
 EXPOSE 8080

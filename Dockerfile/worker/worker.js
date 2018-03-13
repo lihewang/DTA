@@ -740,7 +740,7 @@ redisJob.on('message', function (channel, message) {
                             //logger.debug(`[${process.pid}]` + ' ***iter' + iter + ' get sp zone task ' + result);
                             if (result == null) {
                                 redisClient.incr('cnt', function (err, result) {
-                                    console.log('iter' + iter + ' thread ' + result + ' znpath=' + stats.zonepath + ' zonepkt=' + stats.zonepacket + 
+                                    console.log('iter' + iter + ' container ' + result + ' znpath=' + stats.zonepath + ' zonepkt=' + stats.zonepacket + 
                                         ' dppath=' + stats.dppath  + ' dppkt=' + stats.dppacket);
                                     if (result == par.numprocesses) {
                                         console.log('iter' + iter + ' --- sp and mv done ---');
@@ -756,7 +756,7 @@ redisJob.on('message', function (channel, message) {
                                 mode = tsk[3];
                                 pathType = 'ct';    //cost time                                    
                             }
-                            redisClient.publish('job_status', 'bar_tick:6');
+                            //redisClient.publish('job_status', 'bar_tick:6');
                             return callback(null, result != null);
                         });
                     },
