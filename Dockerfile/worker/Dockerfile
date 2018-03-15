@@ -1,5 +1,7 @@
 #worker image
 FROM node:alpine AS worker
+ENV PROJECT_ID dta-beta-198020
+ENV BUCKET_NAME eltod-1
 RUN npm install async
 RUN npm install fast-csv
 RUN npm install ioredis

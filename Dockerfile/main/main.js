@@ -10,8 +10,8 @@ var csv = require('fast-csv');
 var os = require('os');
 var storage = require('@google-cloud/storage');
 
-var cloud_prjID = 'dta-beta';
-var cloud_bucketName = 'eltod-beta';
+var cloud_prjID = process.env.PROJECT_ID;
+var cloud_bucketName = process.env.BUCKET_NAME;
 var runlistfilename = 'runlist.json';
 //var redisIP = "redis://127.0.0.1:6379";
 var redisIP = "redis.default.svc.cluster.local:6379";
@@ -518,7 +518,7 @@ redisJob.on("message", function (channel, message) {
                                 if (err) {
                                     console.log('iter' + iter + ' upload to bucket err '+ err);
                                 } else {
-                                    console.log('iter' + iter + ' upload to bucket success ' + result);
+                                    console.log('iter' + iter + ' upload vol.csv to bucket ' + cloud_bucketName);
                                 }
                                 callback();
                             });                                                                             
@@ -528,11 +528,11 @@ redisJob.on("message", function (channel, message) {
                             //cvgStream.end();
                             //pathStream.end();
                             if (scenIndex == runListPar.runs.length - 1) {
-                                console.log('iter' + iter + ' end of program');
+                                console.log('iter' + iter + '--- program end ---');
                                 //process.exit(0); //End server
                                 bucket.upload('/output/runfinished', { destination: '/output/runfinished' }, function (err, result) {
                                     volRunFinished.end();
-                                    callback(null, "End of program");
+                                    callback(null, "program end");
                                 });                               
                             } else {
                                 iter = 1;

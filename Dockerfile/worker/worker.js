@@ -7,8 +7,8 @@ var os = require('os');
 var storage = require('@google-cloud/storage');
 
 var localDebug = false;  //true for local debug
-var cloud_prjID = 'dta-beta';
-var cloud_bucketName = 'eltod-beta';
+var cloud_prjID = process.env.PROJECT_ID;
+var cloud_bucketName = process.env.BUCKET_NAME;
 var runlistfilename = 'runlist.json';
 if (localDebug) {
     var redisIP = "redis://127.0.0.1:6379";
