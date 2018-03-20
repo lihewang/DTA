@@ -1,12 +1,11 @@
 
 //---Parameters---
-var prjId = 'dta-beta';              //match Google Cloud project ID
-var bucketName = 'eltod-beta';       //match Google Cloud storage bucket name
+var bucketName = 'eltod-1';       //match Google Cloud storage bucket name
 
 var clusterName = "eltod";
 var zone = "us-central1-a";
-var numNodes = 8;
-var numWorkerPods = 30;
+var numNodes = 3;
+var numWorkerPods = 5;
 var machineType = 'g1-small'; 
 //var machineType = 'n1-standard-1';
 var deleteCluster = true;              //delete cluster after model run finished
@@ -20,37 +19,47 @@ console.log('|    (c)2018                                 |');
 console.log('----------------------------------------------');
 
 const { exec } = require('child_process');
-
-//set pods number in runlist
-var runlistFile = 'runlist.json';
-var fs = require('fs');
-var par = JSON.parse(fs.readFileSync(runlistFile));
-par.runs.forEach(function (scen) {
-    par[scen].overwrite.numprocesses = numWorkerPods;
-});
-fs.writeFileSync(runlistFile, JSON.stringify(par, null, "\t"));
-console.log('set number of worker pods = ' + numWorkerPods);
-
-//copy runlist file
-process.stdout.write('copy runlist to cloud storage ... ');
-exec('gsutil cp ' + runlistFile + ' gs://' + bucketName + '/', (err, stdout, stderr) => {
-    if (err) {
-        console.log(err);
-    } else {
-        console.log(stdout);
-        //clean storage
-        exec('gsutil rm gs://' + bucketName + '/output/runfinished', (err, stdout, stderr) => {
-            if (err) {
-                createCluster(); //no output from previous run
-            } else {
-                console.log('clean storage done' + stdout);
-                createCluster();
-                //copyOutput();
-            }
-        });
-    }
+var prjId = '';
+exec("gcloud config list --format=json", (err, stdout) => {
+    var configList = JSON.parse(stdout);
+    console.log('PROJECT_ID = ' + configList.core.project);
+    console.log('BUCKET_NAME = ' + bucketName);
+    console.log('USER_ACCOUNT = ' + configList.core.account);
+    prjId = configList.core.project;
+    init();
 });
 
+var init = function () {
+    //set pods number in runlist
+    var runlistFile = 'runlist.json';
+    var fs = require('fs');
+    var par = JSON.parse(fs.readFileSync(runlistFile));
+    par.runs.forEach(function (scen) {
+        par[scen].overwrite.numprocesses = numWorkerPods;
+    });
+    fs.writeFileSync(runlistFile, JSON.stringify(par, null, "\t"));
+    console.log('number of worker pods = ' + numWorkerPods);
+
+    //copy runlist file
+    process.stdout.write('copy runlist to cloud storage ... ');
+    exec('gsutil cp ' + runlistFile + ' gs://' + bucketName + '/', (err, stdout, stderr) => {
+        if (err) {
+            console.log(err);
+        } else {
+            console.log(stdout);
+            //clean storage
+            exec('gsutil rm gs://' + bucketName + '/output/runfinished', (err, stdout, stderr) => {
+                if (err) {
+                    createCluster(); //no output from previous run
+                } else {
+                    console.log('clean storage done' + stdout);
+                    createCluster();
+                    //copyOutput();
+                }
+            });
+        }
+    });
+}
 var createCluster = function () {
     var symbols = ['-', '\\', '|', '/'];;
     var ticks = 0;
@@ -109,7 +118,7 @@ var createPods = function () {
                 }
                 console.log('set worker replicas done - ' + stdout);
 
-                //create main and run model           
+                //create main and run model  
                 exec('kubectl create -f main.yaml', (err, stdout, stderr) => {
                     if (err) {
                         console.log('create main ' + err);
