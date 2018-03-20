@@ -47,12 +47,12 @@ var init = function () {
             console.log(err);
         } else {
             console.log(stdout);
-            //clean storage
+            //clean storage finish file
             exec('gsutil rm gs://' + bucketName + '/output/runfinished', (err, stdout, stderr) => {
                 if (err) {
                     createCluster(); //no output from previous run
                 } else {
-                    console.log('clean storage done' + stdout);
+                    console.log('prepare storage done' + stdout);
                     createCluster();
                     //copyOutput();
                 }
@@ -111,7 +111,7 @@ var createPods = function () {
             }
             console.log('create worker done - ' + stdout);
             //set worker replicas
-            exec('kubectl scale --replicas=' + numWorkerPods + ' -f worker.yaml', (err, stdout, stderr) => {
+            exec('kubectl scale --replicas=' + numWorkerPods + ' deployment/worker', (err, stdout, stderr) => {
                 if (err) {
                     console.log('set worker replicas ' + err);
                     return;
