@@ -1,17 +1,3 @@
-apiVersion: v1
-kind: Service
-metadata:
-  name: main
-  labels:
-    app: main
-spec:
-  type: NodePort
-  ports:
-  - port: 8080
-    name: main
-    targetPort: 8080
-  selector:
-    app: main
 apiVersion: extensions/v1beta1
 kind: Deployment
 metadata:
@@ -27,10 +13,25 @@ spec:
     spec:
       containers:
       - name: main
-        image: gcr.io/dta-01/main:latest
+        image: gcr.io/dta-beta-198020/main:latest
         resources:
           requests:
-            cpu: 100m
+            cpu: "0.1"
             memory: 100Mi
         ports:
         - containerPort: 8080
+---		
+apiVersion: v1
+kind: Service
+metadata:
+  name: main
+  labels:
+    app: main
+spec:
+  type: NodePort
+  ports:
+  - port: 8080
+    name: main
+    targetPort: 8080
+  selector:
+    app: main
