@@ -156,10 +156,10 @@ var copyOutput = function () {
 }
 
 var delCluster = function () {
-    exec('gsutil cp -r gs://' + bucketName + '/output/* ./output/', (err, stdout, stderr) => {
-        if (err) {  
-            console.log('copy output ' + err);
-        } else {
+    //exec('gsutil cp -r gs://' + bucketName + '/output/* ./output/', (err, stdout, stderr) => {
+    //    if (err) {  
+    //        console.log('copy output ' + err);
+    //    } else {
             if (deleteCluster) {
                 var symbols = ['-', '\\', '|', '/'];
                 var ticks = 0;
@@ -184,6 +184,6 @@ var delCluster = function () {
                 console.log('WARNING: YOU ARE STILL BEING CHARGED FOR BY GOOGLE! GO TO GOOGLE CLOUD CONSOLE TO DELETE THE CLUSTER!');
                 console.log('end of model run');
             }
-        }
-    });    
+    //    }
+    //});    
 }
