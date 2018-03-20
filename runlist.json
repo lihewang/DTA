@@ -1,6 +1,6 @@
 {
 	"runs": [
-		"I95"
+		"base"
 	],
 	"base": {
 		"parameterfile": "input/parameters.json",
