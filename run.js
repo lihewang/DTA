@@ -20,6 +20,7 @@ console.log('----------------------------------------------');
 
 const { exec } = require('child_process');
 var prjId = '';
+var startTime = Date.now();
 exec("gcloud config list --format=json", (err, stdout) => {
     var configList = JSON.parse(stdout);
     console.log('PROJECT_ID = ' + configList.core.project);
@@ -177,13 +178,21 @@ var delCluster = function () {
                     } else {
                         clearInterval(objI);
                         console.log(' done');
-                        console.log('end of model run ' + stdout);
+                        //console.log('end of model run ' + stdout);
                     }
+                    logTime();
                 });
             } else {                
                 console.log('WARNING: YOU ARE STILL BEING CHARGED FOR BY GOOGLE! GO TO GOOGLE CLOUD CONSOLE TO DELETE THE CLUSTER!');
-                console.log('end of model run');
+                //console.log('end of model run');
+                logTime();
             }
     //    }
     //});    
 }
+
+var logTime = function () {
+    var timeLaps = Math.round((Date.now() - startTime) / 1000 / 60 * 10) / 10;
+    console.log('end of model run in ' + timeLaps + ' min');
+}
+
